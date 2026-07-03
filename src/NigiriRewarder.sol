@@ -4,7 +4,7 @@ pragma solidity 0.8.28;
 import {Ownable} from "solady/auth/Ownable.sol";
 import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
 import {IHook} from "nigiri-contracts/interfaces/IHook.sol";
-import {IOrderBook} from "nigiri-contracts/interfaces/IOrderBook.sol";
+import {IOrderBook} from "./interfaces/IOrderBook.sol";
 
 /// @title Nigiri Rewarder
 /// @notice Minimal reward accounting contract for canonical top buyers.
