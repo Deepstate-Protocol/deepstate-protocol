@@ -30,7 +30,7 @@ jobs:
           chmod 600 ~/.ssh/nigiri_contracts_deploy_key
           trap 'rm -f ~/.ssh/nigiri_contracts_deploy_key' EXIT
           ssh-keyscan github.com >> ~/.ssh/known_hosts
-          git config core.sshCommand "ssh -i ~/.ssh/nigiri_contracts_deploy_key -o IdentitiesOnly=yes"
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/nigiri_contracts_deploy_key -o IdentitiesOnly=yes"
           git submodule update --init --recursive --depth 1
 
       - name: Install Foundry
