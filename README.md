@@ -40,3 +40,28 @@ redemption for returning the burned deposit token.
 forge build
 forge test
 ```
+
+## Deployment
+
+`script/DeployNigiri.s.sol` deploys the core stack, configures the vault's
+Fee Flow auction, and transfers ownership of `NigiriToken`, `NigiriVault`,
+`NigiriRewarder`, and `RoutingEngine` to `NigiriGovernor`.
+
+Required environment variables:
+
+```bash
+export PRIVATE_KEY=...
+export VALUE_TOKEN=0x... # USDC or the value accrual token
+```
+
+Optional environment variables include `ROUTER_FEE_BPS`, `NIGIRI_MINTER`,
+`REWARD_TOKEN`, `WRAPPED_NATIVE`, the `FEE_FLOW_*` auction parameters, and the
+`GOVERNOR_*` governance parameters. Set `WRAPPED_NATIVE` to WETH on networks
+where native sweeping should be enabled.
+
+```bash
+forge script script/DeployNigiri.s.sol:DeployNigiri \
+  --rpc-url "$RPC_URL" \
+  --broadcast \
+  --verify
+```
