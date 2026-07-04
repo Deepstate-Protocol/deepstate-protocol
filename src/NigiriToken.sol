@@ -2,10 +2,10 @@
 pragma solidity ^0.8.20;
 
 import {Ownable} from "solady/auth/Ownable.sol";
-import {ERC20Votes} from "solady/tokens/ERC20Votes.sol";
+import {ERC20} from "solady/tokens/ERC20.sol";
 
 /// @notice Ecosystem ERC20 whose mint authority is controlled by the contract owner.
-contract NigiriToken is ERC20Votes, Ownable {
+contract NigiriToken is ERC20, Ownable {
     string internal tokenName;
     string internal tokenSymbol;
     address public minter;
@@ -32,11 +32,6 @@ contract NigiriToken is ERC20Votes, Ownable {
         return tokenSymbol;
     }
 
-    /// @notice OZ Governor compatibility for Solady's ERC20Votes total-supply checkpoints.
-    function getPastTotalSupply(uint256 timepoint) public view returns (uint256) {
-        return getPastVotesTotalSupply(timepoint);
-    }
-
     function setMinter(address minter_) external onlyOwner {
         minter = minter_;
         emit MinterSet(minter_);
@@ -50,9 +45,5 @@ contract NigiriToken is ERC20Votes, Ownable {
 
     function burn(uint256 amount) external {
         _burn(msg.sender, amount);
-    }
-
-    function _afterTokenTransfer(address from, address to, uint256 amount) internal override {
-        ERC20Votes._afterTokenTransfer(from, to, amount);
     }
 }
