@@ -2,7 +2,9 @@
 pragma solidity ^0.8.20;
 
 import {Ownable} from "solady/auth/Ownable.sol";
+import {ERC20} from "solady/tokens/ERC20.sol";
 import {ERC4626} from "solady/tokens/ERC4626.sol";
+import {ERC20Votes} from "solady/tokens/ERC20Votes.sol";
 import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {ReentrancyGuard} from "solady/utils/ReentrancyGuard.sol";
 import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
@@ -13,7 +15,7 @@ import {IWrappedNative} from "./interfaces/IWrappedNative.sol";
 /// @notice Share vault with ERC-4626 deposit math over a burned accounting asset.
 /// @dev ERC-4626 has one underlying asset. This vault deliberately separates the
 /// deposit/accounting asset from the value token redeemed by share holders.
-contract NigiriVault is ERC4626, Ownable, ReentrancyGuard {
+contract NigiriVault is ERC4626, ERC20Votes, Ownable, ReentrancyGuard {
     using FixedPointMathLib for uint256;
 
     address public immutable depositToken;
@@ -75,6 +77,15 @@ contract NigiriVault is ERC4626, Ownable, ReentrancyGuard {
 
     function symbol() public view override returns (string memory) {
         return vaultSymbol;
+    }
+
+    function decimals() public view override(ERC20, ERC4626) returns (uint8) {
+        return ERC4626.decimals();
+    }
+
+    /// @notice OZ Governor compatibility for Solady's ERC20Votes total-supply checkpoints.
+    function getPastTotalSupply(uint256 timepoint) public view returns (uint256) {
+        return getPastVotesTotalSupply(timepoint);
     }
 
     /// @notice ERC-4626 accounting asset. Deposits burn this token instead of retaining it.
@@ -184,5 +195,9 @@ contract NigiriVault is ERC4626, Ownable, ReentrancyGuard {
         IWrappedNative(wrappedNative_).deposit{value: balance}();
         SafeTransferLib.safeTransfer(wrappedNative_, auction_, balance);
         emit NativeSweptToAuction(balance);
+    }
+
+    function _afterTokenTransfer(address from, address to, uint256 amount) internal override(ERC20, ERC20Votes) {
+        ERC20Votes._afterTokenTransfer(from, to, amount);
     }
 }
