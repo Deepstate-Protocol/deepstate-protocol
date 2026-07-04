@@ -3,3 +3,4 @@ solady/=lib/solady/src/
 fee-flow/=lib/fee-flow/src/
 evc/=lib/fee-flow/lib/ethereum-vault-connector/src/
 solmate/=lib/fee-flow/lib/solmate/src/
+nigiri-contracts/=lib/nigiri-contracts/src/
