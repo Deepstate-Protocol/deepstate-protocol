@@ -6,11 +6,11 @@ import {Test} from "forge-std/Test.sol";
 import {FeeFlowController} from "fee-flow/FeeFlowController.sol";
 import {EthereumVaultConnector} from "evc/EthereumVaultConnector.sol";
 
-import {NigiriVault} from "../src/NigiriVault.sol";
+import {DeepstateVault} from "../src/DeepstateVault.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockWETH} from "./mocks/MockWETH.sol";
 
-contract NigiriVaultTest is Test {
+contract DeepstateVaultTest is Test {
     uint256 internal constant INIT_PRICE = 100e6;
     uint256 internal constant MIN_INIT_PRICE = 1e6;
     uint256 internal constant EPOCH_PERIOD = 14 days;
@@ -25,7 +25,7 @@ contract NigiriVaultTest is Test {
     MockERC20 internal valueToken;
     MockERC20 internal feeToken;
     MockWETH internal wrappedNative;
-    NigiriVault internal vault;
+    DeepstateVault internal vault;
     EthereumVaultConnector internal evc;
     FeeFlowController internal auction;
 
@@ -35,8 +35,8 @@ contract NigiriVaultTest is Test {
         feeToken = new MockERC20("Fee Token", "FEE", 18);
         wrappedNative = new MockWETH();
 
-        vault = new NigiriVault(
-            owner, address(depositToken), address(valueToken), address(wrappedNative), "Nigiri Vault Share", "nVLT"
+        vault = new DeepstateVault(
+            owner, address(depositToken), address(valueToken), address(wrappedNative), "Deepstate Vault Share", "vDEEP"
         );
 
         evc = new EthereumVaultConnector();
@@ -176,7 +176,7 @@ contract NigiriVaultTest is Test {
         tokens[0] = address(valueToken);
 
         vm.prank(owner);
-        vm.expectRevert(NigiriVault.ProtectedToken.selector);
+        vm.expectRevert(DeepstateVault.ProtectedToken.selector);
         vault.sweepToAuction(tokens);
     }
 }

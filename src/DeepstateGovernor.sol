@@ -16,8 +16,8 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {ERC20Votes} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Votes.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-/// @notice Governor for the Nigiri ecosystem, backed by escrowed vNIGIRI shares.
-contract NigiriGovernor is
+/// @notice Governor for the Deepstate ecosystem, backed by escrowed vDEEP shares.
+contract DeepstateGovernor is
     Governor,
     GovernorSettings,
     GovernorCountingSimple,
@@ -28,7 +28,7 @@ contract NigiriGovernor is
 {
     using SafeERC20 for IERC20;
 
-    IERC20 public immutable vNigiri;
+    IERC20 public immutable vDeep;
 
     event GovernanceEntered(address indexed account, uint256 shares);
     event GovernanceExited(address indexed account, uint256 shares);
@@ -37,41 +37,41 @@ contract NigiriGovernor is
     error ZeroShares();
 
     constructor(
-        IERC20 vNigiri_,
+        IERC20 vDeep_,
         uint48 initialVotingDelay,
         uint32 initialVotingPeriod,
         uint256 initialProposalThreshold,
         uint256 quorumNumeratorValue,
         uint48 initialVoteExtension
     )
-        Governor("NigiriGovernor")
-        ERC20("NigiriGovernor", "gNIGIRI")
+        Governor("DeepstateGovernor")
+        ERC20("DeepstateGovernor", "STATE")
         GovernorSettings(initialVotingDelay, initialVotingPeriod, initialProposalThreshold)
         GovernorVotes(IVotes(address(this)))
         GovernorVotesQuorumFraction(quorumNumeratorValue)
         GovernorPreventLateQuorum(initialVoteExtension)
     {
-        if (address(vNigiri_) == address(0)) revert ZeroAddress();
-        vNigiri = vNigiri_;
+        if (address(vDeep_) == address(0)) revert ZeroAddress();
+        vDeep = vDeep_;
     }
 
-    /// @notice Escrows vNIGIRI shares and mints 1:1 governance voting tokens.
+    /// @notice Escrows vDEEP shares and mints 1:1 governance voting tokens.
     function enterGovernance(uint256 shares) external returns (uint256 minted) {
         if (shares == 0) revert ZeroShares();
 
-        vNigiri.safeTransferFrom(msg.sender, address(this), shares);
+        vDeep.safeTransferFrom(msg.sender, address(this), shares);
         _mint(msg.sender, shares);
 
         emit GovernanceEntered(msg.sender, shares);
         return shares;
     }
 
-    /// @notice Burns governance voting tokens and returns the escrowed vNIGIRI shares 1:1.
+    /// @notice Burns governance voting tokens and returns the escrowed vDEEP shares 1:1.
     function exitGovernance(uint256 shares) external returns (uint256 returnedShares) {
         if (shares == 0) revert ZeroShares();
 
         _burn(msg.sender, shares);
-        vNigiri.safeTransfer(msg.sender, shares);
+        vDeep.safeTransfer(msg.sender, shares);
 
         emit GovernanceExited(msg.sender, shares);
         return shares;

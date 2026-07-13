@@ -1,11 +1,11 @@
-# Nigiri Vault
+# Deepstate Vault
 
 Foundry project for a Solady-based share vault with an Euler Fee Flow-style
 Dutch auction for converting miscellaneous fee assets into a single value token.
 
 ## Contracts
 
-- `NigiriVault`: mints ERC-20 vault shares using ERC-4626 deposit/mint math over
+- `DeepstateVault`: mints ERC-20 vault shares using ERC-4626 deposit/mint math over
   a burnable deposit token. Deposited tokens are transferred in, burned, and
   recorded as `totalBurnedDepositAssets`.
 - `redeemValue`: burns shares for the holder's pro-rata amount of the value
@@ -43,9 +43,9 @@ forge test
 
 ## Deployment
 
-`script/DeployNigiri.s.sol` deploys the core stack, configures the vault's
-Fee Flow auction, and transfers ownership of `NigiriToken`, `NigiriVault`,
-`NigiriRewarder`, and `RoutingEngine` to `NigiriGovernor`.
+`script/DeployDeepstate.s.sol` deploys the core stack, configures the vault's
+Fee Flow auction, and transfers ownership of `DeepstateToken`, `DeepstateVault`,
+`DeepstateRewarder`, and `DeepstateV1` to `DeepstateGovernor`.
 
 Required environment variables:
 
@@ -54,13 +54,13 @@ export PRIVATE_KEY=...
 export VALUE_TOKEN=0x... # USDC or the value accrual token
 ```
 
-Optional environment variables include `ROUTER_FEE_BPS`, `NIGIRI_MINTER`,
+Optional environment variables include `ROUTER_FEE_BPS`, `DEEP_MINTER`,
 `REWARD_TOKEN`, `WRAPPED_NATIVE`, the `FEE_FLOW_*` auction parameters, and the
 `GOVERNOR_*` governance parameters. Set `WRAPPED_NATIVE` to WETH on networks
 where native sweeping should be enabled.
 
 ```bash
-forge script script/DeployNigiri.s.sol:DeployNigiri \
+forge script script/DeployDeepstate.s.sol:DeployDeepstate \
   --rpc-url "$RPC_URL" \
   --broadcast \
   --verify

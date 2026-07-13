@@ -13,7 +13,7 @@ import {IWrappedNative} from "./interfaces/IWrappedNative.sol";
 /// @notice Share vault with ERC-4626 deposit math over a burned accounting asset.
 /// @dev ERC-4626 has one underlying asset. This vault deliberately separates the
 /// deposit/accounting asset from the value token redeemed by share holders.
-contract NigiriVault is ERC4626, Ownable, ReentrancyGuard {
+contract DeepstateVault is ERC4626, Ownable, ReentrancyGuard {
     using FixedPointMathLib for uint256;
 
     address public immutable depositToken;

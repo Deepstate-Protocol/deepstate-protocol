@@ -4,13 +4,13 @@ pragma solidity ^0.8.24;
 import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-import {NigiriGovernor} from "../src/NigiriGovernor.sol";
-import {NigiriToken} from "../src/NigiriToken.sol";
-import {NigiriVault} from "../src/NigiriVault.sol";
+import {DeepstateGovernor} from "../src/DeepstateGovernor.sol";
+import {DeepstateToken} from "../src/DeepstateToken.sol";
+import {DeepstateVault} from "../src/DeepstateVault.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockWETH} from "./mocks/MockWETH.sol";
 
-contract NigiriGovernanceTest is Test {
+contract DeepstateGovernanceTest is Test {
     uint48 internal constant VOTING_DELAY = 1;
     uint32 internal constant VOTING_PERIOD = 8;
     uint256 internal constant PROPOSAL_THRESHOLD = 0;
@@ -22,34 +22,34 @@ contract NigiriGovernanceTest is Test {
     address internal newAuction = makeAddr("newAuction");
     address internal newMinter = makeAddr("newMinter");
 
-    NigiriToken internal nigiri;
+    DeepstateToken internal deepstate;
     MockERC20 internal valueToken;
     MockWETH internal wrappedNative;
-    NigiriVault internal vault;
-    NigiriGovernor internal governor;
+    DeepstateVault internal vault;
+    DeepstateGovernor internal governor;
 
     function setUp() public {
         vm.startPrank(deployer);
 
-        nigiri = new NigiriToken(deployer, "Nigiri", "NIGIRI");
+        deepstate = new DeepstateToken(deployer, "Deepstate", "DEEP");
         valueToken = new MockERC20("USD Coin", "USDC", 6);
         wrappedNative = new MockWETH();
-        vault = new NigiriVault(
-            deployer, address(nigiri), address(valueToken), address(wrappedNative), "vNigiri", "vNIGIRI"
+        vault = new DeepstateVault(
+            deployer, address(deepstate), address(valueToken), address(wrappedNative), "vDeep", "vDEEP"
         );
-        governor = new NigiriGovernor(
+        governor = new DeepstateGovernor(
             IERC20(address(vault)), VOTING_DELAY, VOTING_PERIOD, PROPOSAL_THRESHOLD, QUORUM_NUMERATOR, VOTE_EXTENSION
         );
 
-        nigiri.setMinter(deployer);
-        nigiri.mint(alice, 100e18);
-        nigiri.transferOwnership(address(governor));
+        deepstate.setMinter(deployer);
+        deepstate.mint(alice, 100e18);
+        deepstate.transferOwnership(address(governor));
         vault.transferOwnership(address(governor));
 
         vm.stopPrank();
 
         vm.startPrank(alice);
-        nigiri.approve(address(vault), type(uint256).max);
+        deepstate.approve(address(vault), type(uint256).max);
         vault.deposit(100e18, alice);
         vault.approve(address(governor), type(uint256).max);
         governor.enterGovernance(100e18);
@@ -93,7 +93,7 @@ contract NigiriGovernanceTest is Test {
         uint256[] memory values = new uint256[](1);
 
         bytes[] memory calldatas = new bytes[](1);
-        calldatas[0] = abi.encodeCall(NigiriVault.setAuction, (newAuction));
+        calldatas[0] = abi.encodeCall(DeepstateVault.setAuction, (newAuction));
 
         _passProposal(targets, values, calldatas, "set vault auction");
 
@@ -101,27 +101,27 @@ contract NigiriGovernanceTest is Test {
         assertEq(vault.auction(), newAuction);
     }
 
-    function testGovernorControlsNigiriMinter() public {
+    function testGovernorControlsDeepstateMinter() public {
         address[] memory targets = new address[](1);
-        targets[0] = address(nigiri);
+        targets[0] = address(deepstate);
 
         uint256[] memory values = new uint256[](1);
 
         bytes[] memory calldatas = new bytes[](1);
-        calldatas[0] = abi.encodeCall(NigiriToken.setMinter, (newMinter));
+        calldatas[0] = abi.encodeCall(DeepstateToken.setMinter, (newMinter));
 
-        _passProposal(targets, values, calldatas, "set nigiri minter");
+        _passProposal(targets, values, calldatas, "set deepstate minter");
 
-        assertEq(nigiri.owner(), address(governor));
-        assertEq(nigiri.minter(), newMinter);
+        assertEq(deepstate.owner(), address(governor));
+        assertEq(deepstate.minter(), newMinter);
 
         vm.prank(newMinter);
-        nigiri.mint(alice, 1e18);
-        assertEq(nigiri.balanceOf(alice), 1e18);
+        deepstate.mint(alice, 1e18);
+        assertEq(deepstate.balanceOf(alice), 1e18);
 
         vm.prank(deployer);
-        vm.expectRevert(NigiriToken.NotMinter.selector);
-        nigiri.mint(alice, 1e18);
+        vm.expectRevert(DeepstateToken.NotMinter.selector);
+        deepstate.mint(alice, 1e18);
     }
 
     function _passProposal(

@@ -1,9 +1,18 @@
 {
+  "lib/deepstate-contracts": {
+    "rev": "56c7434aceb437b17cf5814fe6e4e30d26028dfd"
+  },
+  "lib/fee-flow": {
+    "rev": "3bee858a1568d1313f37d615953f83391a897866"
+  },
   "lib/forge-std": {
     "tag": {
       "name": "v1.16.1",
       "rev": "620536fa5277db4e3fd46772d5cbc1ea0696fb43"
     }
+  },
+  "lib/openzeppelin-contracts": {
+    "rev": "5fd1781b1454fd1ef8e722282f86f9293cacf256"
   },
   "lib/solady": {
     "rev": "ab96a830e705de13e0f58cfaefadab4ac8257655"

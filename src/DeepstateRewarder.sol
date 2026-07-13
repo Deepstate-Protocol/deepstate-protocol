@@ -3,10 +3,10 @@ pragma solidity 0.8.28;
 
 import {Ownable} from "solady/auth/Ownable.sol";
 import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
-import {IHook} from "nigiri-contracts/interfaces/IHook.sol";
+import {IHook} from "deepstate-contracts/interfaces/IHook.sol";
 import {IOrderBook} from "./interfaces/IOrderBook.sol";
 
-/// @title Nigiri Rewarder
+/// @title Deepstate Rewarder
 /// @notice Minimal reward accounting contract for canonical top buyers.
 /// @dev
 /// The matching engine calls `execute` when a rewarded token's top buyer changes or its live
@@ -22,14 +22,14 @@ import {IOrderBook} from "./interfaces/IOrderBook.sol";
 /// For token0 rewards the top buyer is the best bid. For token1 rewards the top buyer is the best
 /// ask, measured by the ask's live base amount because rewards are relative to the token being
 /// bought in that side's accounting.
-contract NigiriRewarder is Ownable, IHook {
+contract DeepstateRewarder is Ownable, IHook {
     using SafeTransferLib for address;
 
     /// @notice Pool-scoped current reward cursor for one rewarded token.
     /// @dev Packed by Solidity into one storage slot.
     struct Rewardee {
         /// @notice Current top order nonce for the pool/token cursor.
-        uint40 orderNonce;
+        uint32 orderNonce;
         /// @notice Timestamp when the current top order became active.
         uint64 startedAt;
     }
@@ -44,7 +44,7 @@ contract NigiriRewarder is Ownable, IHook {
     mapping(bytes32 poolId => mapping(address token => Rewardee rewardee)) public rewardees;
 
     /// @notice Accrued rewards per book, rewarded token, and order nonce.
-    mapping(bytes32 bookId => mapping(address token => mapping(uint40 orderNonce => uint256 balance))) public balances;
+    mapping(bytes32 bookId => mapping(address token => mapping(uint32 orderNonce => uint256 balance))) public balances;
 
     /// @notice Emitted when the authorized engine is changed.
     /// @param engine Engine allowed to call `execute`.
@@ -64,9 +64,9 @@ contract NigiriRewarder is Ownable, IHook {
         bytes32 poolId,
         bytes32 bookId,
         address token,
-        uint40 outgoingOrderNonce,
-        uint192 outgoingAmount,
-        uint40 incomingOrderNonce,
+        uint32 outgoingOrderNonce,
+        uint160 outgoingAmount,
+        uint32 incomingOrderNonce,
         uint256 reward
     );
     /// @notice Emitted when accrued rewards are paid to an order owner.
@@ -126,7 +126,7 @@ contract NigiriRewarder is Ownable, IHook {
     /// Accrued balances are stored under `bookId` and the outgoing nonce so claims remain unique
     /// across epochs. The cursor is then overwritten with `incomingOrderNonce` and the current
     /// timestamp. A zero incoming nonce clears the cursor because the side has no top buyer.
-    function execute(bytes32 poolId, bytes32 bookId, address token, uint192 outgoingAmount, uint40 incomingOrderNonce)
+    function execute(bytes32 poolId, bytes32 bookId, address token, uint160 outgoingAmount, uint32 incomingOrderNonce)
         external
         onlyEngine
     {
@@ -138,12 +138,12 @@ contract NigiriRewarder is Ownable, IHook {
         }
 
         uint256 reward;
-        uint40 outgoingOrderNonce;
+        uint32 outgoingOrderNonce;
         if (outgoingAmount != 0) {
             // forge-lint: disable-next-line(unsafe-typecast)
-            outgoingOrderNonce = uint40(packedRewardee);
+            outgoingOrderNonce = uint32(packedRewardee);
             // forge-lint: disable-next-line(unsafe-typecast)
-            uint64 startedAt = uint64(packedRewardee >> 40);
+            uint64 startedAt = uint64(packedRewardee >> 32);
             if (outgoingOrderNonce != 0 && startedAt != 0) {
                 // forge-lint: disable-next-line(unsafe-typecast)
                 uint64 duration = uint64(block.timestamp - startedAt);
@@ -156,7 +156,7 @@ contract NigiriRewarder is Ownable, IHook {
 
         // forge-lint: disable-next-line(unsafe-typecast)
         uint256 startedAtNext = uint256(uint64(block.timestamp));
-        uint256 nextRewardee = incomingOrderNonce == 0 ? 0 : uint256(incomingOrderNonce) | (startedAtNext << 40);
+        uint256 nextRewardee = incomingOrderNonce == 0 ? 0 : uint256(incomingOrderNonce) | (startedAtNext << 32);
         /// @solidity memory-safe-assembly
         assembly {
             sstore(rewardeeSlot, nextRewardee)
@@ -174,7 +174,7 @@ contract NigiriRewarder is Ownable, IHook {
     /// This prevents rewards from being claimed for a nonce after the corresponding order owner has
     /// been deleted by cancel/claim.
     function distributeRewards(bytes32 bookId, bytes32 order, address token) external {
-        uint40 nonce = uint40(uint256(order));
+        uint32 nonce = uint32(uint256(order));
         uint256 amount = balances[bookId][token][nonce];
         if (amount == 0) return;
 
@@ -194,7 +194,7 @@ contract NigiriRewarder is Ownable, IHook {
     /// @param duration Seconds the outgoing order was the recorded top buyer.
     /// @return Reward token amount to accrue.
     /// @dev Virtual so deployments can replace the simple amount-time formula.
-    function _calculateReward(bytes32 poolId, address token, uint192 amount, uint64 duration)
+    function _calculateReward(bytes32 poolId, address token, uint160 amount, uint64 duration)
         internal
         view
         virtual

@@ -4,15 +4,15 @@ pragma solidity 0.8.28;
 import {Script, console2} from "forge-std/Script.sol";
 import {FeeFlowController} from "fee-flow/FeeFlowController.sol";
 import {EthereumVaultConnector} from "evc/EthereumVaultConnector.sol";
-import {RoutingEngine} from "nigiri-contracts/RoutingEngine.sol";
+import {DeepstateV1} from "deepstate-contracts/DeepstateV1.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-import {NigiriGovernor} from "../src/NigiriGovernor.sol";
-import {NigiriRewarder} from "../src/NigiriRewarder.sol";
-import {NigiriToken} from "../src/NigiriToken.sol";
-import {NigiriVault} from "../src/NigiriVault.sol";
+import {DeepstateGovernor} from "../src/DeepstateGovernor.sol";
+import {DeepstateRewarder} from "../src/DeepstateRewarder.sol";
+import {DeepstateToken} from "../src/DeepstateToken.sol";
+import {DeepstateVault} from "../src/DeepstateVault.sol";
 
-contract DeployNigiri is Script {
+contract DeployDeepstate is Script {
     uint256 internal constant DEFAULT_FEE_FLOW_INIT_PRICE = 100e6;
     uint256 internal constant DEFAULT_FEE_FLOW_EPOCH_PERIOD = 14 days;
     uint256 internal constant DEFAULT_FEE_FLOW_PRICE_MULTIPLIER = 2e18;
@@ -25,11 +25,11 @@ contract DeployNigiri is Script {
     uint48 internal constant DEFAULT_VOTE_EXTENSION = 1 days;
 
     struct Deployment {
-        NigiriToken nigiri;
-        NigiriVault vault;
-        NigiriGovernor governor;
-        RoutingEngine router;
-        NigiriRewarder rewarder;
+        DeepstateToken deepstate;
+        DeepstateVault vault;
+        DeepstateGovernor governor;
+        DeepstateV1 router;
+        DeepstateRewarder rewarder;
         EthereumVaultConnector evc;
         FeeFlowController feeFlow;
     }
@@ -39,7 +39,7 @@ contract DeployNigiri is Script {
         address valueToken;
         address wrappedNative;
         address rewardTokenOverride;
-        address nigiriMinter;
+        address deepstateMinter;
         string tokenName;
         string tokenSymbol;
         string vaultName;
@@ -62,11 +62,11 @@ contract DeployNigiri is Script {
 
         vm.startBroadcast(deployerPrivateKey);
 
-        deployment.nigiri = new NigiriToken(config.deployer, config.tokenName, config.tokenSymbol);
-        deployment.router = new RoutingEngine();
-        deployment.vault = new NigiriVault(
+        deployment.deepstate = new DeepstateToken(config.deployer, config.tokenName, config.tokenSymbol);
+        deployment.router = new DeepstateV1();
+        deployment.vault = new DeepstateVault(
             config.deployer,
-            address(deployment.nigiri),
+            address(deployment.deepstate),
             config.valueToken,
             config.wrappedNative,
             config.vaultName,
@@ -84,9 +84,9 @@ contract DeployNigiri is Script {
         );
 
         address rewardToken =
-            config.rewardTokenOverride == address(0) ? address(deployment.nigiri) : config.rewardTokenOverride;
-        deployment.rewarder = new NigiriRewarder(config.deployer, address(deployment.router), rewardToken);
-        deployment.governor = new NigiriGovernor(
+            config.rewardTokenOverride == address(0) ? address(deployment.deepstate) : config.rewardTokenOverride;
+        deployment.rewarder = new DeepstateRewarder(config.deployer, address(deployment.router), rewardToken);
+        deployment.governor = new DeepstateGovernor(
             IERC20(address(deployment.vault)),
             config.votingDelay,
             config.votingPeriod,
@@ -96,16 +96,16 @@ contract DeployNigiri is Script {
         );
 
         deployment.vault.setAuction(address(deployment.feeFlow));
-        if (config.nigiriMinter != address(0)) deployment.nigiri.setMinter(config.nigiriMinter);
+        if (config.deepstateMinter != address(0)) deployment.deepstate.setMinter(config.deepstateMinter);
         if (config.routerFeeBps != 0) deployment.router.setFeeConfig(address(deployment.vault), config.routerFeeBps);
 
         address governor = address(deployment.governor);
-        deployment.nigiri.transferOwnership(governor);
+        deployment.deepstate.transferOwnership(governor);
         deployment.vault.transferOwnership(governor);
         deployment.rewarder.transferOwnership(governor);
         deployment.router.transferOwnership(governor);
 
-        require(deployment.nigiri.owner() == governor, "NIGIRI_OWNER");
+        require(deployment.deepstate.owner() == governor, "DEEP_OWNER");
         require(deployment.vault.owner() == governor, "VAULT_OWNER");
         require(deployment.rewarder.owner() == governor, "REWARDER_OWNER");
         require(deployment.router.owner() == governor, "ROUTER_OWNER");
@@ -122,11 +122,11 @@ contract DeployNigiri is Script {
         config.valueToken = vm.envAddress("VALUE_TOKEN");
         config.wrappedNative = vm.envOr("WRAPPED_NATIVE", address(0));
         config.rewardTokenOverride = vm.envOr("REWARD_TOKEN", address(0));
-        config.nigiriMinter = vm.envOr("NIGIRI_MINTER", address(0));
-        config.tokenName = vm.envOr("NIGIRI_TOKEN_NAME", string("Nigiri"));
-        config.tokenSymbol = vm.envOr("NIGIRI_TOKEN_SYMBOL", string("NIGIRI"));
-        config.vaultName = vm.envOr("NIGIRI_VAULT_NAME", string("vNigiri"));
-        config.vaultSymbol = vm.envOr("NIGIRI_VAULT_SYMBOL", string("vNIGIRI"));
+        config.deepstateMinter = vm.envOr("DEEP_MINTER", address(0));
+        config.tokenName = vm.envOr("DEEP_TOKEN_NAME", string("Deepstate"));
+        config.tokenSymbol = vm.envOr("DEEP_TOKEN_SYMBOL", string("DEEP"));
+        config.vaultName = vm.envOr("DEEP_VAULT_NAME", string("vDeep"));
+        config.vaultSymbol = vm.envOr("DEEP_VAULT_SYMBOL", string("vDEEP"));
         config.routerFeeBps = _toUint16(vm.envOr("ROUTER_FEE_BPS", uint256(0)));
         config.feeFlowInitPrice = vm.envOr("FEE_FLOW_INIT_PRICE", DEFAULT_FEE_FLOW_INIT_PRICE);
         config.feeFlowEpochPeriod = vm.envOr("FEE_FLOW_EPOCH_PERIOD", DEFAULT_FEE_FLOW_EPOCH_PERIOD);
@@ -158,11 +158,11 @@ contract DeployNigiri is Script {
     }
 
     function _logDeployment(Deployment memory deployment) internal pure {
-        console2.log("NigiriToken", address(deployment.nigiri));
-        console2.log("NigiriVault", address(deployment.vault));
-        console2.log("NigiriGovernor", address(deployment.governor));
-        console2.log("RoutingEngine", address(deployment.router));
-        console2.log("NigiriRewarder", address(deployment.rewarder));
+        console2.log("DeepstateToken", address(deployment.deepstate));
+        console2.log("DeepstateVault", address(deployment.vault));
+        console2.log("DeepstateGovernor", address(deployment.governor));
+        console2.log("DeepstateV1", address(deployment.router));
+        console2.log("DeepstateRewarder", address(deployment.rewarder));
         console2.log("EthereumVaultConnector", address(deployment.evc));
         console2.log("FeeFlowController", address(deployment.feeFlow));
     }
