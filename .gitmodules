@@ -7,9 +7,9 @@
 [submodule "lib/fee-flow"]
 	path = lib/fee-flow
 	url = https://github.com/euler-xyz/fee-flow
-[submodule "lib/nigiri-contracts"]
-	path = lib/nigiri-contracts
-	url = git@github.com:dangerousfood/nigiri-contracts.git
+[submodule "lib/deepstate-contracts"]
+	path = lib/deepstate-contracts
+	url = git@github.com:Deepstate-Protocol/deepstate-contracts.git
 [submodule "lib/openzeppelin-contracts"]
 	path = lib/openzeppelin-contracts
 	url = https://github.com/OpenZeppelin/openzeppelin-contracts.git

@@ -5,7 +5,7 @@ import {Ownable} from "solady/auth/Ownable.sol";
 import {ERC20} from "solady/tokens/ERC20.sol";
 
 /// @notice Ecosystem ERC20 whose mint authority is controlled by the contract owner.
-contract NigiriToken is ERC20, Ownable {
+contract DeepstateToken is ERC20, Ownable {
     string internal tokenName;
     string internal tokenSymbol;
     address public minter;

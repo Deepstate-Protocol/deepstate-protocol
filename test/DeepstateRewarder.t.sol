@@ -3,9 +3,9 @@ pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
 import {ERC20} from "solady/tokens/ERC20.sol";
-import {IHook} from "nigiri-contracts/interfaces/IHook.sol";
-import {RoutingEngine} from "nigiri-contracts/RoutingEngine.sol";
-import {NigiriRewarder} from "../src/NigiriRewarder.sol";
+import {IHook} from "deepstate-contracts/interfaces/IHook.sol";
+import {DeepstateV1} from "deepstate-contracts/DeepstateV1.sol";
+import {DeepstateRewarder} from "../src/DeepstateRewarder.sol";
 
 contract RewardTestERC20 is ERC20 {
     string private _name;
@@ -30,7 +30,7 @@ contract RewardTestERC20 is ERC20 {
 }
 
 contract RevertingHook is IHook {
-    function execute(bytes32, bytes32, address, uint192, uint40) external pure {
+    function execute(bytes32, bytes32, address, uint160, uint32) external pure {
         revert("bad hook");
     }
 }
@@ -39,17 +39,17 @@ contract CountingHook is IHook {
     uint256 public calls;
     address public lastToken;
 
-    function execute(bytes32, bytes32, address token, uint192, uint40) external {
+    function execute(bytes32, bytes32, address token, uint160, uint32) external {
         calls++;
         lastToken = token;
     }
 }
 
-contract NigiriRewarderTest is Test {
-    uint40 internal constant MAX_ORDER_NONCE = type(uint40).max;
+contract DeepstateRewarderTest is Test {
+    uint32 internal constant MAX_ORDER_NONCE = type(uint32).max;
 
-    RoutingEngine internal engine;
-    NigiriRewarder internal rewarder;
+    DeepstateV1 internal engine;
+    DeepstateRewarder internal rewarder;
     RewardTestERC20 internal token0;
     RewardTestERC20 internal token1;
     RewardTestERC20 internal rewardToken;
@@ -68,9 +68,9 @@ contract NigiriRewarderTest is Test {
             token1 = a;
         }
 
-        engine = new RoutingEngine();
+        engine = new DeepstateV1();
         rewardToken = new RewardTestERC20("Reward", "RWD");
-        rewarder = new NigiriRewarder(address(this), address(engine), address(rewardToken));
+        rewarder = new DeepstateRewarder(address(this), address(engine), address(rewardToken));
         engine.setPoolHookConfig(address(token0), address(token1), address(rewarder), true, false);
 
         _fundAndApprove(alice);
@@ -84,7 +84,7 @@ contract NigiriRewarderTest is Test {
         vm.prank(alice);
         bytes32 aliceBid = engine.fill(_fill(0, _order(10, 5, 0), true, false, false));
 
-        (uint40 firstNonce, uint64 firstStartedAt) = rewarder.rewardees(pid, address(token0));
+        (uint32 firstNonce, uint64 firstStartedAt) = rewarder.rewardees(pid, address(token0));
         assertEq(firstNonce, MAX_ORDER_NONCE);
         assertEq(firstStartedAt, block.timestamp);
 
@@ -95,7 +95,7 @@ contract NigiriRewarderTest is Test {
         bobBid;
 
         assertEq(rewarder.balances(id, address(token0), MAX_ORDER_NONCE), 55);
-        (uint40 secondNonce, uint64 secondStartedAt) = rewarder.rewardees(pid, address(token0));
+        (uint32 secondNonce, uint64 secondStartedAt) = rewarder.rewardees(pid, address(token0));
         assertEq(secondNonce, MAX_ORDER_NONCE - 1);
         assertEq(secondStartedAt, block.timestamp);
 
@@ -107,12 +107,12 @@ contract NigiriRewarderTest is Test {
 
     function test_SettersAndValidationBranches() public {
         vm.expectRevert(bytes4(keccak256("InvalidEngine()")));
-        new NigiriRewarder(address(this), address(0), address(rewardToken));
+        new DeepstateRewarder(address(this), address(0), address(rewardToken));
 
         vm.expectRevert(bytes4(keccak256("InvalidRewardToken()")));
-        new NigiriRewarder(address(this), address(engine), address(0));
+        new DeepstateRewarder(address(this), address(engine), address(0));
 
-        RoutingEngine replacementEngine = new RoutingEngine();
+        DeepstateV1 replacementEngine = new DeepstateV1();
         RewardTestERC20 replacementRewardToken = new RewardTestERC20("Reward2", "RWD2");
 
         rewarder.setEngine(address(replacementEngine));
@@ -170,7 +170,7 @@ contract NigiriRewarderTest is Test {
         engine.fill(_fill(0, _order(10, 2, 0), false, true, false));
 
         assertEq(rewarder.balances(id, address(token0), MAX_ORDER_NONCE), 35);
-        (uint40 nonceAfterFirstFill, uint64 startedAtAfterFirstFill) = rewarder.rewardees(pid, address(token0));
+        (uint32 nonceAfterFirstFill, uint64 startedAtAfterFirstFill) = rewarder.rewardees(pid, address(token0));
         assertEq(nonceAfterFirstFill, MAX_ORDER_NONCE);
         assertEq(startedAtAfterFirstFill, block.timestamp);
 
@@ -180,7 +180,7 @@ contract NigiriRewarderTest is Test {
         engine.fill(_fill(0, _order(10, 1, 0), false, true, false));
 
         assertEq(rewarder.balances(id, address(token0), MAX_ORDER_NONCE), 44);
-        (uint40 nonceAfterSecondFill, uint64 startedAtAfterSecondFill) = rewarder.rewardees(pid, address(token0));
+        (uint32 nonceAfterSecondFill, uint64 startedAtAfterSecondFill) = rewarder.rewardees(pid, address(token0));
         assertEq(nonceAfterSecondFill, MAX_ORDER_NONCE);
         assertEq(startedAtAfterSecondFill, block.timestamp);
     }
@@ -200,7 +200,7 @@ contract NigiriRewarderTest is Test {
         engine.fill(_fill(0, _order(10, 5, 0), false, true, false));
 
         assertEq(rewarder.balances(id, address(token0), MAX_ORDER_NONCE), 65);
-        (uint40 nextNonce, uint64 nextStartedAt) = rewarder.rewardees(pid, address(token0));
+        (uint32 nextNonce, uint64 nextStartedAt) = rewarder.rewardees(pid, address(token0));
         assertEq(nextNonce, MAX_ORDER_NONCE - 1);
         assertEq(nextStartedAt, block.timestamp);
     }
@@ -220,7 +220,7 @@ contract NigiriRewarderTest is Test {
         engine.cancel(address(token0), address(token1), 0, aliceBid);
 
         assertEq(rewarder.balances(id, address(token0), MAX_ORDER_NONCE), 25);
-        (uint40 nextNonce, uint64 nextStartedAt) = rewarder.rewardees(pid, address(token0));
+        (uint32 nextNonce, uint64 nextStartedAt) = rewarder.rewardees(pid, address(token0));
         assertEq(nextNonce, MAX_ORDER_NONCE - 1);
         assertEq(nextStartedAt, block.timestamp);
     }
@@ -242,7 +242,7 @@ contract NigiriRewarderTest is Test {
         engine.cancel(address(token0), address(token1), 0, aliceBid);
 
         assertEq(rewarder.balances(id, address(token0), MAX_ORDER_NONCE), 25);
-        (uint40 nextNonce, uint64 nextStartedAt) = rewarder.rewardees(pid, address(token0));
+        (uint32 nextNonce, uint64 nextStartedAt) = rewarder.rewardees(pid, address(token0));
         assertEq(nextNonce, MAX_ORDER_NONCE - 1);
         assertEq(nextStartedAt, block.timestamp);
     }
@@ -274,9 +274,9 @@ contract NigiriRewarderTest is Test {
     function _fill(uint256 epoch, bytes32 order, bool isBid, bool noRest, bool fillOrKill)
         internal
         view
-        returns (RoutingEngine.FillParams memory params)
+        returns (DeepstateV1.FillParams memory params)
     {
-        params = RoutingEngine.FillParams({
+        params = DeepstateV1.FillParams({
             token0: address(token0),
             token1: address(token1),
             epoch: epoch,
@@ -297,7 +297,8 @@ contract NigiriRewarderTest is Test {
         vm.stopPrank();
     }
 
-    function _order(uint24 price, uint192 quantity, uint40 nonce) internal pure returns (bytes32) {
-        return bytes32((uint256(price) << 232) | (uint256(quantity) << 40) | uint256(nonce));
+    function _order(int32 price, uint160 quantity, uint32 nonce) internal pure returns (bytes32) {
+        // forge-lint: disable-next-line(unsafe-typecast)
+        return bytes32((uint256(uint32(price)) << 224) | (uint256(quantity) << 64) | uint256(nonce));
     }
 }
