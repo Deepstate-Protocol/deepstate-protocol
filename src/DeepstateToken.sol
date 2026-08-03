@@ -1,44 +1,21 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.24;
 
-import {Ownable} from "solady/auth/Ownable.sol";
-import {ERC20} from "solady/tokens/ERC20.sol";
+import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
-/// @notice Ecosystem ERC20 whose mint authority is controlled by the contract owner.
-contract DeepstateToken is ERC20, Ownable {
-    string internal tokenName;
-    string internal tokenSymbol;
-    address public minter;
-
-    event MinterSet(address indexed minter);
+/// @notice Ecosystem ERC20 with governance-administered mint authority.
+contract DeepstateToken is ERC20, AccessControl {
+    bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
 
     error ZeroAddress();
-    error NotMinter();
 
-    constructor(address owner_, string memory name_, string memory symbol_) {
-        if (owner_ == address(0)) revert ZeroAddress();
-
-        tokenName = name_;
-        tokenSymbol = symbol_;
-
-        _initializeOwner(owner_);
+    constructor(address admin_, string memory name_, string memory symbol_) ERC20(name_, symbol_) {
+        if (admin_ == address(0)) revert ZeroAddress();
+        _grantRole(DEFAULT_ADMIN_ROLE, admin_);
     }
 
-    function name() public view override returns (string memory) {
-        return tokenName;
-    }
-
-    function symbol() public view override returns (string memory) {
-        return tokenSymbol;
-    }
-
-    function setMinter(address minter_) external onlyOwner {
-        minter = minter_;
-        emit MinterSet(minter_);
-    }
-
-    function mint(address to, uint256 amount) external {
-        if (msg.sender != minter) revert NotMinter();
+    function mint(address to, uint256 amount) external onlyRole(MINTER_ROLE) {
         if (to == address(0)) revert ZeroAddress();
         _mint(to, amount);
     }
