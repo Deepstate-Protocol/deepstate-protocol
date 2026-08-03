@@ -12,25 +12,43 @@ import {DeepstateRewarder} from "../src/DeepstateRewarder.sol";
 import {DeepstateToken} from "../src/DeepstateToken.sol";
 import {DeepstateVault} from "../src/DeepstateVault.sol";
 
+interface IERC20Decimals {
+    function decimals() external view returns (uint8);
+}
+
 contract DeployDeepstate is Script {
     uint256 internal constant DEFAULT_FEE_FLOW_INIT_PRICE = 100e6;
     uint256 internal constant DEFAULT_FEE_FLOW_EPOCH_PERIOD = 14 days;
     uint256 internal constant DEFAULT_FEE_FLOW_PRICE_MULTIPLIER = 2e18;
     uint256 internal constant DEFAULT_FEE_FLOW_MIN_INIT_PRICE = 1e6;
+    uint16 internal constant DEFAULT_ROUTER_FEE_BPS = 10;
 
-    uint48 internal constant DEFAULT_GOVERNANCE_START_DELAY = 25 days;
+    uint48 internal constant DEFAULT_GOVERNANCE_START_DELAY = 15 days;
     uint48 internal constant DEFAULT_VOTING_DELAY = 3 days;
     uint32 internal constant DEFAULT_VOTING_PERIOD = 1 weeks;
     uint256 internal constant DEFAULT_PROPOSAL_THRESHOLD_NUMERATOR = 1;
     uint256 internal constant DEFAULT_QUORUM_NUMERATOR = 10;
     uint48 internal constant DEFAULT_VOTE_EXTENSION = 1 days;
 
+    uint96 internal constant NVDA_SIDE_EMISSION_CAP = 500_000_000e18;
+    uint96 internal constant DEEP_SIDE_EMISSION_CAP = 250_000_000e18;
+    uint32 internal constant NVDA_EMISSION_DURATION = 395 days;
+    uint32 internal constant DEEP_EMISSION_DURATION = 60 days;
+
+    uint160 internal constant USDG_START_QUANTITY = 1e6;
+    uint160 internal constant USDG_MAX_QUANTITY = 1_000_000e6;
+    uint160 internal constant NVDA_START_QUANTITY = 1e18;
+    uint160 internal constant NVDA_MAX_QUANTITY = 5_000e18;
+    uint160 internal constant DEEP_START_QUANTITY = 1e18;
+    uint160 internal constant DEEP_MAX_QUANTITY = 1_000_000e18;
+
     struct Deployment {
         DeepstateToken deepstate;
         DeepstateVault vault;
         DeepstateGovernor governor;
         DeepstateV1 router;
-        DeepstateRewarder rewarder;
+        DeepstateRewarder nvdaRewarder;
+        DeepstateRewarder deepRewarder;
         EthereumVaultConnector evc;
         FeeFlowController feeFlow;
     }
@@ -38,6 +56,7 @@ contract DeployDeepstate is Script {
     struct Config {
         address deployer;
         address valueToken;
+        address nvdaToken;
         address wrappedNative;
         address deepstateMinter;
         string tokenName;
@@ -55,9 +74,6 @@ contract DeployDeepstate is Script {
         uint256 proposalThresholdNumerator;
         uint256 quorumNumerator;
         uint48 voteExtension;
-        uint64 rewardEmissionStart;
-        uint64 rewardPoolShareWad;
-        uint128 rewardInitialSupply;
     }
 
     function run() external returns (Deployment memory deployment) {
@@ -72,6 +88,9 @@ contract DeployDeepstate is Script {
     }
 
     function _deploy(Config memory config) internal returns (Deployment memory deployment) {
+        require(IERC20Decimals(config.valueToken).decimals() == 6, "VALUE_TOKEN_DECIMALS");
+        require(IERC20Decimals(config.nvdaToken).decimals() == 18, "NVDA_TOKEN_DECIMALS");
+
         deployment.deepstate = new DeepstateToken(config.deployer, config.tokenName, config.tokenSymbol);
         deployment.router = new DeepstateV1();
         deployment.vault = new DeepstateVault(
@@ -93,19 +112,23 @@ contract DeployDeepstate is Script {
             config.feeFlowMinInitPrice
         );
 
-        (address poolToken0, address poolToken1) = _sortTokens(address(deployment.deepstate), config.valueToken);
-        bytes32 rewardPoolId = deployment.router.poolId(poolToken0, poolToken1);
-        deployment.rewarder = new DeepstateRewarder(
-            config.deployer,
-            address(deployment.router),
+        deployment.nvdaRewarder = _deployRewarder(
+            config,
+            deployment,
+            config.nvdaToken,
+            NVDA_SIDE_EMISSION_CAP,
+            NVDA_EMISSION_DURATION,
+            NVDA_START_QUANTITY,
+            NVDA_MAX_QUANTITY
+        );
+        deployment.deepRewarder = _deployRewarder(
+            config,
+            deployment,
             address(deployment.deepstate),
-            rewardPoolId,
-            poolToken0,
-            poolToken1,
-            config.rewardEmissionStart,
-            config.rewardInitialSupply,
-            config.rewardInitialSupply,
-            config.rewardPoolShareWad
+            DEEP_SIDE_EMISSION_CAP,
+            DEEP_EMISSION_DURATION,
+            DEEP_START_QUANTITY,
+            DEEP_MAX_QUANTITY
         );
         deployment.governor = new DeepstateGovernor(
             IVotes(address(deployment.vault)),
@@ -118,9 +141,9 @@ contract DeployDeepstate is Script {
         );
 
         deployment.vault.setAuction(address(deployment.feeFlow));
-        deployment.router.setPoolHookConfig(poolToken0, poolToken1, address(deployment.rewarder), true, true);
         bytes32 minterRole = deployment.deepstate.MINTER_ROLE();
-        deployment.deepstate.grantRole(minterRole, address(deployment.rewarder));
+        deployment.deepstate.grantRole(minterRole, address(deployment.nvdaRewarder));
+        deployment.deepstate.grantRole(minterRole, address(deployment.deepRewarder));
         if (config.deepstateMinter != address(0)) deployment.deepstate.grantRole(minterRole, config.deepstateMinter);
         if (config.routerFeeBps != 0) deployment.router.setFeeConfig(address(deployment.vault), config.routerFeeBps);
 
@@ -129,18 +152,29 @@ contract DeployDeepstate is Script {
         deployment.deepstate.grantRole(adminRole, governor);
         deployment.deepstate.renounceRole(adminRole, config.deployer);
         deployment.vault.transferOwnership(governor);
-        deployment.rewarder.transferOwnership(governor);
+        deployment.nvdaRewarder.transferOwnership(governor);
+        deployment.deepRewarder.transferOwnership(governor);
         deployment.router.transferOwnership(governor);
 
         require(deployment.deepstate.hasRole(adminRole, governor), "DEEP_ADMIN");
         require(!deployment.deepstate.hasRole(adminRole, config.deployer), "DEPLOYER_DEEP_ADMIN");
-        require(deployment.deepstate.hasRole(minterRole, address(deployment.rewarder)), "REWARDER_MINTER");
+        require(deployment.deepstate.hasRole(minterRole, address(deployment.nvdaRewarder)), "NVDA_REWARDER_MINTER");
+        require(deployment.deepstate.hasRole(minterRole, address(deployment.deepRewarder)), "DEEP_REWARDER_MINTER");
         require(deployment.vault.owner() == governor, "VAULT_OWNER");
-        require(deployment.rewarder.owner() == governor, "REWARDER_OWNER");
+        require(deployment.nvdaRewarder.owner() == governor, "NVDA_REWARDER_OWNER");
+        require(deployment.deepRewarder.owner() == governor, "DEEP_REWARDER_OWNER");
         require(deployment.router.owner() == governor, "ROUTER_OWNER");
         require(deployment.vault.auction() == address(deployment.feeFlow), "VAULT_AUCTION");
-        require(deployment.rewarder.engine() == address(deployment.router), "REWARDER_ENGINE");
-        require(deployment.router.poolHook(rewardPoolId) == address(deployment.rewarder), "REWARDER_HOOK");
+        require(deployment.nvdaRewarder.deepstate() == address(deployment.router), "NVDA_REWARDER_DEEPSTATE");
+        require(deployment.deepRewarder.deepstate() == address(deployment.router), "DEEP_REWARDER_DEEPSTATE");
+        require(
+            deployment.router.poolHook(deployment.nvdaRewarder.poolId()) == address(deployment.nvdaRewarder),
+            "NVDA_REWARDER_HOOK"
+        );
+        require(
+            deployment.router.poolHook(deployment.deepRewarder.poolId()) == address(deployment.deepRewarder),
+            "DEEP_REWARDER_HOOK"
+        );
         require(
             deployment.governor.governanceStart() == block.timestamp + config.governanceStartDelay, "GOVERNANCE_START"
         );
@@ -153,13 +187,14 @@ contract DeployDeepstate is Script {
     function _readConfig(address deployer) internal view returns (Config memory config) {
         config.deployer = deployer;
         config.valueToken = vm.envAddress("VALUE_TOKEN");
+        config.nvdaToken = vm.envAddress("NVDA_TOKEN");
         config.wrappedNative = vm.envOr("WRAPPED_NATIVE", address(0));
         config.deepstateMinter = vm.envOr("DEEP_MINTER", address(0));
         config.tokenName = vm.envOr("DEEP_TOKEN_NAME", string("Deepstate"));
         config.tokenSymbol = vm.envOr("DEEP_TOKEN_SYMBOL", string("DEEP"));
         config.vaultName = vm.envOr("DEEP_VAULT_NAME", string("Deepstate Governance"));
         config.vaultSymbol = vm.envOr("DEEP_VAULT_SYMBOL", string("STATE"));
-        config.routerFeeBps = _toUint16(vm.envOr("ROUTER_FEE_BPS", uint256(0)));
+        config.routerFeeBps = _toUint16(vm.envOr("ROUTER_FEE_BPS", uint256(DEFAULT_ROUTER_FEE_BPS)));
         config.feeFlowInitPrice = vm.envOr("FEE_FLOW_INIT_PRICE", DEFAULT_FEE_FLOW_INIT_PRICE);
         config.feeFlowEpochPeriod = vm.envOr("FEE_FLOW_EPOCH_PERIOD", DEFAULT_FEE_FLOW_EPOCH_PERIOD);
         config.feeFlowPriceMultiplier = vm.envOr("FEE_FLOW_PRICE_MULTIPLIER", DEFAULT_FEE_FLOW_PRICE_MULTIPLIER);
@@ -172,9 +207,6 @@ contract DeployDeepstate is Script {
             vm.envOr("GOVERNOR_PROPOSAL_THRESHOLD_NUMERATOR", DEFAULT_PROPOSAL_THRESHOLD_NUMERATOR);
         config.quorumNumerator = vm.envOr("GOVERNOR_QUORUM_NUMERATOR", DEFAULT_QUORUM_NUMERATOR);
         config.voteExtension = _toUint48(vm.envOr("GOVERNOR_VOTE_EXTENSION", uint256(DEFAULT_VOTE_EXTENSION)));
-        config.rewardEmissionStart = _toUint64(vm.envOr("REWARD_EMISSION_START", block.timestamp));
-        config.rewardPoolShareWad = _toUint64(vm.envOr("REWARD_POOL_SHARE_WAD", uint256(1e18)));
-        config.rewardInitialSupply = _toUint128(vm.envUint("REWARD_INITIAL_SUPPLY"));
     }
 
     function _toUint16(uint256 value) internal pure returns (uint16) {
@@ -195,21 +227,43 @@ contract DeployDeepstate is Script {
         return uint48(value);
     }
 
-    function _toUint64(uint256 value) internal pure returns (uint64) {
-        require(value <= type(uint64).max, "UINT64_OVERFLOW");
-        // forge-lint: disable-next-line(unsafe-typecast)
-        return uint64(value);
-    }
-
-    function _toUint128(uint256 value) internal pure returns (uint128) {
-        require(value <= type(uint128).max, "UINT128_OVERFLOW");
-        // forge-lint: disable-next-line(unsafe-typecast)
-        return uint128(value);
-    }
-
     function _sortTokens(address a, address b) internal pure returns (address token0, address token1) {
         require(a != b && a != address(0) && b != address(0), "INVALID_REWARD_POOL");
         return a < b ? (a, b) : (b, a);
+    }
+
+    function _deployRewarder(
+        Config memory config,
+        Deployment memory deployment,
+        address marketToken,
+        uint96 sideCap,
+        uint32 duration,
+        uint160 marketStartQuantity,
+        uint160 marketMaxQuantity
+    ) internal returns (DeepstateRewarder rewarder) {
+        (address poolToken0, address poolToken1) = _sortTokens(marketToken, config.valueToken);
+        bool marketIsToken0 = marketToken == poolToken0;
+        uint160 token0Start = marketIsToken0 ? marketStartQuantity : USDG_START_QUANTITY;
+        uint160 token0Max = marketIsToken0 ? marketMaxQuantity : USDG_MAX_QUANTITY;
+        uint160 token1Start = marketIsToken0 ? USDG_START_QUANTITY : marketStartQuantity;
+        uint160 token1Max = marketIsToken0 ? USDG_MAX_QUANTITY : marketMaxQuantity;
+        bytes32 rewardPoolId = deployment.router.poolId(poolToken0, poolToken1);
+
+        rewarder = new DeepstateRewarder(
+            config.deployer,
+            address(deployment.router),
+            address(deployment.deepstate),
+            rewardPoolId,
+            poolToken0,
+            poolToken1,
+            sideCap,
+            duration,
+            token0Start,
+            token0Max,
+            token1Start,
+            token1Max
+        );
+        deployment.router.setPoolHookConfig(poolToken0, poolToken1, address(rewarder), true, true);
     }
 
     function _logDeployment(Deployment memory deployment) internal pure {
@@ -217,7 +271,8 @@ contract DeployDeepstate is Script {
         console2.log("DeepstateVault", address(deployment.vault));
         console2.log("DeepstateGovernor", address(deployment.governor));
         console2.log("DeepstateV1", address(deployment.router));
-        console2.log("DeepstateRewarder", address(deployment.rewarder));
+        console2.log("NVDA/USDG DeepstateRewarder", address(deployment.nvdaRewarder));
+        console2.log("DEEP/USDG DeepstateRewarder", address(deployment.deepRewarder));
         console2.log("EthereumVaultConnector", address(deployment.evc));
         console2.log("FeeFlowController", address(deployment.feeFlow));
     }

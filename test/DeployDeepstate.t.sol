@@ -5,6 +5,7 @@ import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol"
 import {Test} from "forge-std/Test.sol";
 
 import {DeployDeepstate} from "../script/DeployDeepstate.s.sol";
+import {DeepstateRewarder} from "../src/DeepstateRewarder.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 
 contract DeployDeepstateTest is DeployDeepstate, Test {
@@ -13,9 +14,11 @@ contract DeployDeepstateTest is DeployDeepstate, Test {
 
     function testDeploymentAppliesLaunchPolicyAndAuthorityTopology() public {
         MockERC20 valueToken = new MockERC20("USDG", "USDG", 6);
+        MockERC20 nvdaToken = new MockERC20("NVIDIA", "NVDA", 18);
         Config memory config = Config({
             deployer: address(this),
             valueToken: address(valueToken),
+            nvdaToken: address(nvdaToken),
             wrappedNative: address(0),
             deepstateMinter: additionalMinter,
             tokenName: "Deepstate",
@@ -32,10 +35,7 @@ contract DeployDeepstateTest is DeployDeepstate, Test {
             votingPeriod: DEFAULT_VOTING_PERIOD,
             proposalThresholdNumerator: DEFAULT_PROPOSAL_THRESHOLD_NUMERATOR,
             quorumNumerator: DEFAULT_QUORUM_NUMERATOR,
-            voteExtension: DEFAULT_VOTE_EXTENSION,
-            rewardEmissionStart: uint64(block.timestamp),
-            rewardPoolShareWad: 1e18,
-            rewardInitialSupply: 1e18
+            voteExtension: DEFAULT_VOTE_EXTENSION
         });
 
         Deployment memory deployment = _deploy(config);
@@ -44,18 +44,31 @@ contract DeployDeepstateTest is DeployDeepstate, Test {
 
         assertTrue(deployment.deepstate.hasRole(adminRole, address(deployment.governor)));
         assertFalse(deployment.deepstate.hasRole(adminRole, address(this)));
-        assertTrue(deployment.deepstate.hasRole(minterRole, address(deployment.rewarder)));
+        assertTrue(deployment.deepstate.hasRole(minterRole, address(deployment.nvdaRewarder)));
+        assertTrue(deployment.deepstate.hasRole(minterRole, address(deployment.deepRewarder)));
         assertTrue(deployment.deepstate.hasRole(minterRole, additionalMinter));
 
         assertEq(deployment.vault.owner(), address(deployment.governor));
-        assertEq(deployment.rewarder.owner(), address(deployment.governor));
+        assertEq(deployment.nvdaRewarder.owner(), address(deployment.governor));
+        assertEq(deployment.deepRewarder.owner(), address(deployment.governor));
         assertEq(deployment.router.owner(), address(deployment.governor));
-        assertEq(deployment.governor.governanceStart(), block.timestamp + 25 days);
+        assertEq(deployment.governor.governanceStart(), block.timestamp + 15 days);
         assertEq(deployment.governor.votingDelay(), 3 days);
         assertEq(deployment.governor.votingPeriod(), 1 weeks);
         assertEq(deployment.governor.proposalThresholdNumerator(), 1);
         assertEq(deployment.governor.quorumNumerator(), 10);
         assertFalse(deployment.governor.proposalNeedsQueuing(0));
+
+        assertEq(deployment.nvdaRewarder.sideEmissionCap(), NVDA_SIDE_EMISSION_CAP);
+        assertEq(deployment.nvdaRewarder.emissionDuration(), NVDA_EMISSION_DURATION);
+        assertEq(deployment.deepRewarder.sideEmissionCap(), DEEP_SIDE_EMISSION_CAP);
+        assertEq(deployment.deepRewarder.emissionDuration(), DEEP_EMISSION_DURATION);
+        assertEq(deployment.router.poolHook(deployment.nvdaRewarder.poolId()), address(deployment.nvdaRewarder));
+        assertEq(deployment.router.poolHook(deployment.deepRewarder.poolId()), address(deployment.deepRewarder));
+        _assertRewardQuantities(deployment.nvdaRewarder, address(nvdaToken), address(valueToken), 5_000e18);
+        _assertRewardQuantities(
+            deployment.deepRewarder, address(deployment.deepstate), address(valueToken), 1_000_000e18
+        );
 
         vm.expectRevert(
             abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, address(this), adminRole)
@@ -69,8 +82,9 @@ contract DeployDeepstateTest is DeployDeepstate, Test {
 
     function testConfigReadsExplicitGovernanceLaunchParameters() public {
         MockERC20 valueToken = new MockERC20("USDG", "USDG", 6);
+        MockERC20 nvdaToken = new MockERC20("NVIDIA", "NVDA", 18);
         vm.setEnv("VALUE_TOKEN", vm.toString(address(valueToken)));
-        vm.setEnv("REWARD_INITIAL_SUPPLY", vm.toString(uint256(1e18)));
+        vm.setEnv("NVDA_TOKEN", vm.toString(address(nvdaToken)));
         vm.setEnv("GOVERNOR_START_DELAY", vm.toString(uint256(17 days)));
         vm.setEnv("GOVERNOR_PROPOSAL_THRESHOLD_NUMERATOR", "3");
         vm.setEnv("GOVERNOR_QUORUM_NUMERATOR", "12");
@@ -80,5 +94,75 @@ contract DeployDeepstateTest is DeployDeepstate, Test {
         assertEq(config.governanceStartDelay, 17 days);
         assertEq(config.proposalThresholdNumerator, 3);
         assertEq(config.quorumNumerator, 12);
+        assertEq(config.routerFeeBps, 10);
+        assertEq(config.nvdaToken, address(nvdaToken));
+    }
+
+    function testDeploymentRejectsUnexpectedExternalTokenDecimals() public {
+        MockERC20 badValueToken = new MockERC20("USDG", "USDG", 18);
+        MockERC20 nvdaToken = new MockERC20("NVIDIA", "NVDA", 18);
+        Config memory config = _config(address(badValueToken), address(nvdaToken));
+
+        vm.expectRevert(bytes("VALUE_TOKEN_DECIMALS"));
+        this.deployForTest(config);
+
+        MockERC20 valueToken = new MockERC20("USDG", "USDG", 6);
+        MockERC20 badNvdaToken = new MockERC20("NVIDIA", "NVDA", 6);
+        config = _config(address(valueToken), address(badNvdaToken));
+
+        vm.expectRevert(bytes("NVDA_TOKEN_DECIMALS"));
+        this.deployForTest(config);
+    }
+
+    function deployForTest(Config calldata config) external returns (Deployment memory) {
+        return _deploy(config);
+    }
+
+    function _config(address valueToken, address nvdaToken) private view returns (Config memory config) {
+        config = Config({
+            deployer: address(this),
+            valueToken: valueToken,
+            nvdaToken: nvdaToken,
+            wrappedNative: address(0),
+            deepstateMinter: address(0),
+            tokenName: "Deepstate",
+            tokenSymbol: "DEEP",
+            vaultName: "Deepstate Governance",
+            vaultSymbol: "STATE",
+            routerFeeBps: DEFAULT_ROUTER_FEE_BPS,
+            feeFlowInitPrice: DEFAULT_FEE_FLOW_INIT_PRICE,
+            feeFlowEpochPeriod: DEFAULT_FEE_FLOW_EPOCH_PERIOD,
+            feeFlowPriceMultiplier: DEFAULT_FEE_FLOW_PRICE_MULTIPLIER,
+            feeFlowMinInitPrice: DEFAULT_FEE_FLOW_MIN_INIT_PRICE,
+            governanceStartDelay: DEFAULT_GOVERNANCE_START_DELAY,
+            votingDelay: DEFAULT_VOTING_DELAY,
+            votingPeriod: DEFAULT_VOTING_PERIOD,
+            proposalThresholdNumerator: DEFAULT_PROPOSAL_THRESHOLD_NUMERATOR,
+            quorumNumerator: DEFAULT_QUORUM_NUMERATOR,
+            voteExtension: DEFAULT_VOTE_EXTENSION
+        });
+    }
+
+    function _assertRewardQuantities(
+        DeepstateRewarder rewarder,
+        address marketToken,
+        address valueToken,
+        uint160 marketMaximum
+    ) private view {
+        if (marketToken < valueToken) {
+            assertEq(rewarder.token0(), marketToken);
+            assertEq(rewarder.token0StartQuantity(), 1e18);
+            assertEq(rewarder.token0MaxQuantity(), marketMaximum);
+            assertEq(rewarder.token1(), valueToken);
+            assertEq(rewarder.token1StartQuantity(), 1e6);
+            assertEq(rewarder.token1MaxQuantity(), 1_000_000e6);
+        } else {
+            assertEq(rewarder.token0(), valueToken);
+            assertEq(rewarder.token0StartQuantity(), 1e6);
+            assertEq(rewarder.token0MaxQuantity(), 1_000_000e6);
+            assertEq(rewarder.token1(), marketToken);
+            assertEq(rewarder.token1StartQuantity(), 1e18);
+            assertEq(rewarder.token1MaxQuantity(), marketMaximum);
+        }
     }
 }

@@ -31,10 +31,11 @@ redemption capacity.
 STATE and `DeepstateGovernor` use ERC-6372 timestamp checkpoints. Governor
 delay, period, and late-quorum extension settings are denominated in seconds.
 The Governor constructor rejects voting tokens that do not expose the expected
-timestamp clock. Proposal creation is disabled for the first 25 days after
+timestamp clock. Proposal creation is disabled for the first 15 days after
 deployment. After launch, the defaults are a three-day voting delay, one-week
 voting period, one-day late-quorum extension, 10% quorum, and a proposal
-threshold equal to 1% of the prior timestamp's STATE supply, rounded up.
+threshold equal to 1% of the prior timestamp's STATE supply, rounded up. The
+earliest launch proposal can therefore finish at day 25.
 
 The deployment deliberately does not install a timelock. The Governor remains
 the direct owner and executor for the vault, rewarder, and router. Successful
@@ -42,24 +43,45 @@ proposals can therefore execute immediately after voting ends.
 
 ## Reward Schedule
 
-One immutable `DeepstateRewarder` is deployed per pool. The first 30 days emit
-an amount equal to the configured initial supply on a smooth curve, followed by
-100% year-over-year inflation. Accounting stops after 100 annual periods to
-bound exponential arithmetic. Each rewarder receives an immutable fraction of
-the global schedule and divides that pool budget equally between both sides of
-the book.
+The deployment creates one immutable rewarder for NVDA/USDG and one for
+DEEP/USDG. Each side starts its own finite clock when its first top order is
+reported. Empty books do not pause a clock, and unearned emissions expire.
 
-The first observed quantity receives 100% of its side's scheduled budget. Later
-amounts are compared with a seven-day, time-weighted EMA: matching the reference
-receives 50%, 2x receives 80%, and 3x receives 90%. Same-block transitions do
-not move the reference. The multiplier is unitless and never exceeds 100%, so
-different token decimal scales require no execute-time normalization. Pool
-allocation fractions across all deployed rewarders must sum to at most `1e18`.
-Rewarders mint accrued DEEP directly to order owners at claim time. Each
-rewarder must hold `DeepstateToken.MINTER_ROLE`; governance administers that
-role and can freeze future claims from a rewarder by revoking it. The token does
-not enforce the aggregate rewarder allocation, so deployment review must still
-verify that all active rewarder shares sum to no more than the global schedule.
+Maximum cumulative emissions use a 30-day logarithmic time constant:
+
+```text
+C(t) = cap * ln(1 + t / 30 days) / ln(1 + duration / 30 days)
+```
+
+`t` is capped at the side's duration. The immutable allocations are:
+
+| Pool | Per-side cap | Duration | Pool cap |
+| --- | ---: | ---: | ---: |
+| NVDA/USDG | 500,000,000 DEEP | 395 days | 1,000,000,000 DEEP |
+| DEEP/USDG | 250,000,000 DEEP | 60 days | 500,000,000 DEEP |
+
+The amount required for the full side budget grows geometrically for 30 days:
+
+```text
+Q(t) = Qstart * (Qmax / Qstart)^(min(t, 30 days) / 30 days)
+```
+
+| Sold token | Start | Day 30 and later | Raw units |
+| --- | ---: | ---: | ---: |
+| USDG | 1 | 1,000,000 | `1e6` to `1_000_000e6` |
+| NVDA | 1 | 5,000 | `1e18` to `5_000e18` |
+| DEEP | 1 | 1,000,000 | `1e18` to `1_000_000e18` |
+
+Displayed quantity below `Q(t)` earns linearly; quantity at or above it earns
+100%. The contract integrates the moving target across the full reward interval
+rather than sampling only entry or exit. Per-side cumulative accounting also
+enforces the immutable cap independently of the token's role system.
+
+Rewarders mint DEEP directly to order owners at claim time and each holds a
+revocable `DeepstateToken.MINTER_ROLE`. Governance may revoke either role.
+Active orders must call `distributeRewards` immediately before `cancel` in the
+same transaction; claim-time accounting reads the current top quantity before
+paying, while cancel permanently deletes engine ownership.
 
 ## Auction Flow
 
@@ -81,29 +103,28 @@ forge test
 
 ## Deployment
 
-`script/DeployDeepstate.s.sol` deploys the core stack, configures the vault's
-Fee Flow auction, grants the Governor `DeepstateToken`'s default admin role, and
-transfers ownership of `DeepstateVault`, `DeepstateRewarder`, and `DeepstateV1`
-to `DeepstateGovernor`. The deployed rewarder receives `MINTER_ROLE`; an
-optional additional minter may be configured for a separate emissions path.
+`script/DeployDeepstate.s.sol` deploys the core stack and both rewarders,
+configures the vault's Fee Flow auction, enables both pool hooks, grants the
+Governor `DeepstateToken`'s default admin role, and transfers ownership of the
+vault, both rewarders, and `DeepstateV1` to `DeepstateGovernor`. Both rewarders
+receive `MINTER_ROLE`; an optional additional minter may be configured for a
+separate emissions path.
 
 Required environment variables:
 
 ```bash
 export PRIVATE_KEY=...
-export VALUE_TOKEN=0x... # USDC or the value accrual token
-export REWARD_INITIAL_SUPPLY=... # DEEP supply baseline in token base units
+export VALUE_TOKEN=0x... # USDG, required to report 6 decimals
+export NVDA_TOKEN=0x...  # NVDA, required to report 18 decimals
 ```
 
-Optional environment variables include `ROUTER_FEE_BPS`, `DEEP_MINTER`,
+Optional environment variables include `ROUTER_FEE_BPS` (10 bps by default), `DEEP_MINTER`,
 `WRAPPED_NATIVE`, the `FEE_FLOW_*` auction parameters, and the `GOVERNOR_*`
 governance parameters. The launch parameters are
 `GOVERNOR_START_DELAY`, `GOVERNOR_VOTING_DELAY`,
 `GOVERNOR_VOTING_PERIOD`, `GOVERNOR_PROPOSAL_THRESHOLD_NUMERATOR`,
-`GOVERNOR_QUORUM_NUMERATOR`, and `GOVERNOR_VOTE_EXTENSION`.
-`REWARD_EMISSION_START` defaults to the deployment timestamp and
-`REWARD_POOL_SHARE_WAD` defaults to `1e18`. Set `WRAPPED_NATIVE` to WETH on
-networks where native sweeping should be enabled.
+`GOVERNOR_QUORUM_NUMERATOR`, and `GOVERNOR_VOTE_EXTENSION`. Set
+`WRAPPED_NATIVE` to WETH on networks where native sweeping should be enabled.
 
 ```bash
 forge script script/DeployDeepstate.s.sol:DeployDeepstate \
