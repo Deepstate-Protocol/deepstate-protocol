@@ -10,84 +10,68 @@ import {
     GovernorVotesQuorumFraction
 } from "@openzeppelin/contracts/governance/extensions/GovernorVotesQuorumFraction.sol";
 import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
-import {Votes} from "@openzeppelin/contracts/governance/utils/Votes.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {ERC20Votes} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Votes.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {IERC5805} from "@openzeppelin/contracts/interfaces/IERC5805.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
-/// @notice Governor for the Deepstate ecosystem, backed by escrowed vDEEP shares.
+/// @notice Governor for the Deepstate ecosystem, backed directly by STATE vault shares.
 contract DeepstateGovernor is
     Governor,
     GovernorSettings,
     GovernorCountingSimple,
     GovernorVotes,
     GovernorVotesQuorumFraction,
-    GovernorPreventLateQuorum,
-    ERC20Votes
+    GovernorPreventLateQuorum
 {
-    using SafeERC20 for IERC20;
+    bytes32 private constant _TIMESTAMP_MODE_HASH = keccak256("mode=timestamp");
+    uint256 public constant PROPOSAL_THRESHOLD_DENOMINATOR = 100;
 
-    IERC20 public immutable vDeep;
+    uint48 public immutable governanceStart;
 
-    event GovernanceEntered(address indexed account, uint256 shares);
-    event GovernanceExited(address indexed account, uint256 shares);
+    uint256 private _proposalThresholdNumerator;
 
-    error ZeroAddress();
-    error ZeroShares();
+    event ProposalThresholdNumeratorUpdated(uint256 oldNumerator, uint256 newNumerator);
+
+    error TimestampClockRequired();
+    error GovernanceNotStarted(uint48 currentTimepoint, uint48 governanceStart);
+    error InvalidProposalThresholdFraction(uint256 numerator, uint256 denominator);
+    error AbsoluteProposalThresholdUnsupported();
 
     constructor(
-        IERC20 vDeep_,
+        IVotes stateToken,
+        uint48 governanceStartDelay,
         uint48 initialVotingDelay,
         uint32 initialVotingPeriod,
-        uint256 initialProposalThreshold,
+        uint256 initialProposalThresholdNumerator,
         uint256 quorumNumeratorValue,
         uint48 initialVoteExtension
     )
         Governor("DeepstateGovernor")
-        ERC20("DeepstateGovernor", "STATE")
-        GovernorSettings(initialVotingDelay, initialVotingPeriod, initialProposalThreshold)
-        GovernorVotes(IVotes(address(this)))
+        GovernorSettings(initialVotingDelay, initialVotingPeriod, 0)
+        GovernorVotes(stateToken)
         GovernorVotesQuorumFraction(quorumNumeratorValue)
         GovernorPreventLateQuorum(initialVoteExtension)
     {
-        if (address(vDeep_) == address(0)) revert ZeroAddress();
-        vDeep = vDeep_;
+        if (!_usesTimestampClock(IERC5805(address(stateToken)))) {
+            revert TimestampClockRequired();
+        }
+
+        governanceStart = SafeCast.toUint48(block.timestamp + governanceStartDelay);
+        _updateProposalThresholdNumerator(initialProposalThresholdNumerator);
     }
 
-    /// @notice Escrows vDEEP shares and mints 1:1 governance voting tokens.
-    function enterGovernance(uint256 shares) external returns (uint256 minted) {
-        if (shares == 0) revert ZeroShares();
+    function _usesTimestampClock(IERC5805 stateToken) private view returns (bool) {
+        try stateToken.clock() returns (uint48 timepoint) {
+            if (timepoint != uint48(block.timestamp)) return false;
+        } catch {
+            return false;
+        }
 
-        vDeep.safeTransferFrom(msg.sender, address(this), shares);
-        _mint(msg.sender, shares);
-
-        emit GovernanceEntered(msg.sender, shares);
-        return shares;
-    }
-
-    /// @notice Burns governance voting tokens and returns the escrowed vDEEP shares 1:1.
-    function exitGovernance(uint256 shares) external returns (uint256 returnedShares) {
-        if (shares == 0) revert ZeroShares();
-
-        _burn(msg.sender, shares);
-        vDeep.safeTransfer(msg.sender, shares);
-
-        emit GovernanceExited(msg.sender, shares);
-        return shares;
-    }
-
-    function name() public view override(Governor, ERC20) returns (string memory) {
-        return super.name();
-    }
-
-    function clock() public view override(Governor, GovernorVotes, Votes) returns (uint48) {
-        return Votes.clock();
-    }
-
-    // solhint-disable-next-line func-name-mixedcase
-    function CLOCK_MODE() public view override(Governor, GovernorVotes, Votes) returns (string memory) {
-        return Votes.CLOCK_MODE();
+        try stateToken.CLOCK_MODE() returns (string memory mode) {
+            return keccak256(bytes(mode)) == _TIMESTAMP_MODE_HASH;
+        } catch {
+            return false;
+        }
     }
 
     function votingDelay() public view override(Governor, GovernorSettings) returns (uint256) {
@@ -99,7 +83,39 @@ contract DeepstateGovernor is
     }
 
     function proposalThreshold() public view override(Governor, GovernorSettings) returns (uint256) {
-        return super.proposalThreshold();
+        uint48 currentTimepoint = clock();
+        if (currentTimepoint == 0) return 0;
+
+        return Math.mulDiv(
+            token().getPastTotalSupply(currentTimepoint - 1),
+            _proposalThresholdNumerator,
+            PROPOSAL_THRESHOLD_DENOMINATOR,
+            Math.Rounding.Ceil
+        );
+    }
+
+    function proposalThresholdNumerator() public view returns (uint256) {
+        return _proposalThresholdNumerator;
+    }
+
+    function updateProposalThresholdNumerator(uint256 newNumerator) public onlyGovernance {
+        _updateProposalThresholdNumerator(newNumerator);
+    }
+
+    function setProposalThreshold(uint256) public override onlyGovernance {
+        revert AbsoluteProposalThresholdUnsupported();
+    }
+
+    function propose(
+        address[] memory targets,
+        uint256[] memory values,
+        bytes[] memory calldatas,
+        string memory description
+    ) public override returns (uint256) {
+        uint48 currentTimepoint = clock();
+        uint48 start = governanceStart;
+        if (currentTimepoint < start) revert GovernanceNotStarted(currentTimepoint, start);
+        return super.propose(targets, values, calldatas, description);
     }
 
     function quorum(uint256 timepoint) public view override(Governor, GovernorVotesQuorumFraction) returns (uint256) {
@@ -119,11 +135,14 @@ contract DeepstateGovernor is
         super._tallyUpdated(proposalId);
     }
 
-    function _update(address from, address to, uint256 value) internal override(ERC20Votes) {
-        super._update(from, to, value);
-    }
+    function _updateProposalThresholdNumerator(uint256 newNumerator) internal {
+        uint256 denominator = PROPOSAL_THRESHOLD_DENOMINATOR;
+        if (newNumerator > denominator) {
+            revert InvalidProposalThresholdFraction(newNumerator, denominator);
+        }
 
-    function nonces(address owner) public view override returns (uint256) {
-        return super.nonces(owner);
+        uint256 oldNumerator = _proposalThresholdNumerator;
+        _proposalThresholdNumerator = newNumerator;
+        emit ProposalThresholdNumeratorUpdated(oldNumerator, newNumerator);
     }
 }

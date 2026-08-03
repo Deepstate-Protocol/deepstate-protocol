@@ -1,178 +1,185 @@
-// SPDX-License-Identifier: UNLICENSED
+// SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
 import {Ownable} from "solady/auth/Ownable.sol";
-import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
+import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {IHook} from "deepstate-contracts/interfaces/IHook.sol";
 import {IOrderBook} from "./interfaces/IOrderBook.sol";
 
+interface IMintableRewardToken {
+    function mint(address to, uint256 amount) external;
+}
+
 /// @title Deepstate Rewarder
-/// @notice Minimal reward accounting contract for canonical top buyers.
-/// @dev
-/// The matching engine calls `execute` when a rewarded token's top buyer changes or its live
-/// amount changes. This contract accrues `amount * duration` to the outgoing order nonce, then
-/// resets the pool-scoped cursor to the incoming nonce. Balances remain book-scoped because nonces
-/// are unique only inside a book.
-///
-/// The rewarder does not decide whether an order is top of book. That decision stays inside the
-/// matching engine, which has the radix tree context. The rewarder only receives a hook with:
-/// pool id, book id, rewarded token, outgoing top amount, and incoming top nonce.
-///
-/// `token` is the token whose buyer is being rewarded, not necessarily the ERC20 paid as rewards.
-/// For token0 rewards the top buyer is the best bid. For token1 rewards the top buyer is the best
-/// ask, measured by the ask's live base amount because rewards are relative to the token being
-/// bought in that side's accounting.
+/// @notice Pool-specific accounting for a capped DEEP liquidity-emission schedule.
+/// @dev One rewarder is deployed per pool. Its immutable pool allocation is split equally between
+/// both book sides. Rewards compare each outgoing top amount with that side's moving reference;
+/// comparisons are unitless, so token decimals do not affect the multiplier. The reward token must
+/// expose `mint(address,uint256)` and authorize this contract to mint.
 contract DeepstateRewarder is Ownable, IHook {
-    using SafeTransferLib for address;
+    using FixedPointMathLib for uint256;
 
-    /// @notice Pool-scoped current reward cursor for one rewarded token.
-    /// @dev Packed by Solidity into one storage slot.
-    struct Rewardee {
-        /// @notice Current top order nonce for the pool/token cursor.
-        uint32 orderNonce;
-        /// @notice Timestamp when the current top order became active.
-        uint64 startedAt;
-    }
+    uint256 public constant BOOTSTRAP_PERIOD = 30 days;
+    uint256 public constant ANNUAL_PERIOD = 365 days;
+    uint256 public constant REFERENCE_WINDOW = 7 days;
+    uint256 public constant MAX_SCHEDULE_YEARS = 100;
+    uint256 public constant MAX_SCHEDULE_ELAPSED = BOOTSTRAP_PERIOD + MAX_SCHEDULE_YEARS * ANNUAL_PERIOD;
 
-    /// @notice Authorized matching engine that may update reward cursors.
-    address public engine;
+    uint256 internal constant _WAD = 1e18;
+    int256 internal constant _LN2_WAD = 693147180559945309;
+    int256 internal constant _BOOTSTRAP_DECAY_WAD = 3440171329752580000;
 
-    /// @notice ERC20 paid by `distributeRewards`.
-    address public rewardToken;
+    address public immutable engine;
+    address public immutable rewardToken;
+    bytes32 public immutable poolId;
+    address public immutable token0;
+    address public immutable token1;
+    uint64 public immutable emissionStart;
+    uint64 public immutable poolEmissionShareWad;
+    uint128 public immutable initialSupply;
+    uint128 public immutable bootstrapEmissions;
 
-    /// @notice Current top-buyer rewardee per pool and rewarded token.
-    mapping(bytes32 poolId => mapping(address token => Rewardee rewardee)) public rewardees;
+    // Packed as: referenceAmount (160 bits) | startedAt (64 bits) | orderNonce (32 bits).
+    uint256 private _token0Rewardee;
+    uint256 private _token1Rewardee;
 
-    /// @notice Accrued rewards per book, rewarded token, and order nonce.
     mapping(bytes32 bookId => mapping(address token => mapping(uint32 orderNonce => uint256 balance))) public balances;
 
-    /// @notice Emitted when the authorized engine is changed.
-    /// @param engine Engine allowed to call `execute`.
-    event EngineSet(address engine);
-    /// @notice Emitted when the ERC20 paid as rewards is changed.
-    /// @param rewardToken ERC20 paid by `distributeRewards`.
-    event RewardTokenSet(address rewardToken);
-    /// @notice Emitted after a hook accrues the previous top order and installs the next one.
-    /// @param poolId Canonical sorted-token pool id.
-    /// @param bookId Book id where the outgoing balance is accrued.
-    /// @param token Token whose top buyer is rewarded.
-    /// @param outgoingOrderNonce Previous cursor nonce, or zero when no previous cursor existed.
-    /// @param outgoingAmount Previous top order amount in `token` terms.
-    /// @param incomingOrderNonce New top order nonce, or zero when the side is empty.
-    /// @param reward Newly accrued reward balance for `outgoingOrderNonce`.
-    event RewardeeUpdated(
-        bytes32 poolId,
-        bytes32 bookId,
-        address token,
-        uint32 outgoingOrderNonce,
-        uint160 outgoingAmount,
-        uint32 incomingOrderNonce,
-        uint256 reward
-    );
-    /// @notice Emitted when accrued rewards are paid to an order owner.
-    /// @param bookId Book id that scopes the order nonce.
-    /// @param order Original packed order node.
-    /// @param token Token whose top-buyer reward balance is claimed.
-    /// @param owner Order owner paid by this call.
-    /// @param amount Reward token amount transferred.
     event RewardsDistributed(bytes32 bookId, bytes32 order, address token, address owner, uint256 amount);
 
-    /// @notice Engine address is zero.
     error InvalidEngine();
-    /// @notice Reward token address is zero.
     error InvalidRewardToken();
-    /// @notice Caller is not the configured matching engine.
+    error InvalidPool();
+    error InvalidPoolShare();
+    error InvalidEmissionSchedule();
     error NotEngine();
-    /// @notice The reward balance exists but the matching engine no longer reports an owner.
+    error InvalidHookToken();
     error NoOrderOwner();
 
-    /// @notice Initialize the rewarder owner, authorized engine, and payout token.
-    /// @param owner_ Owner allowed to update engine and reward token configuration.
-    /// @param engine_ Matching/routing engine allowed to call `execute`.
-    /// @param rewardToken_ ERC20 paid by `distributeRewards`.
-    constructor(address owner_, address engine_, address rewardToken_) {
+    constructor(
+        address owner_,
+        address engine_,
+        address rewardToken_,
+        bytes32 poolId_,
+        address token0_,
+        address token1_,
+        uint64 emissionStart_,
+        uint128 initialSupply_,
+        uint128 bootstrapEmissions_,
+        uint64 poolEmissionShareWad_
+    ) {
+        if (engine_ == address(0)) revert InvalidEngine();
+        if (rewardToken_ == address(0)) revert InvalidRewardToken();
+        if (poolId_ == bytes32(0) || token0_ == address(0) || token0_ >= token1_) revert InvalidPool();
+        if (poolId_ != _poolId(token0_, token1_)) revert InvalidPool();
+        if (poolEmissionShareWad_ == 0 || poolEmissionShareWad_ > _WAD) revert InvalidPoolShare();
+        // Equal bootstrap emissions and initial supply give 100% inflation over the first 30 days.
+        if (emissionStart_ == 0 || initialSupply_ == 0 || bootstrapEmissions_ != initialSupply_) {
+            revert InvalidEmissionSchedule();
+        }
+
         _initializeOwner(owner_);
-        _setEngine(engine_);
-        _setRewardToken(rewardToken_);
+        engine = engine_;
+        rewardToken = rewardToken_;
+        poolId = poolId_;
+        token0 = token0_;
+        token1 = token1_;
+        emissionStart = emissionStart_;
+        initialSupply = initialSupply_;
+        bootstrapEmissions = bootstrapEmissions_;
+        poolEmissionShareWad = poolEmissionShareWad_;
     }
 
-    /// @notice Restrict a function to the configured matching engine.
-    modifier onlyEngine() {
-        _onlyEngine();
-        _;
+    /// @notice Current order nonce and start time for one book side.
+    function rewardees(address token) external view returns (uint32 orderNonce, uint64 startedAt) {
+        (orderNonce, startedAt,) = _unpackRewardee(_packedRewardee(token));
     }
 
-    /// @notice Revert unless the caller is `engine`.
-    function _onlyEngine() internal view {
-        if (msg.sender != engine) revert NotEngine();
+    /// @notice Moving quantity reference for one book side.
+    function referenceAmount(address token) external view returns (uint160 movingReference) {
+        (,, movingReference) = _unpackRewardee(_packedRewardee(token));
     }
 
-    /// @notice Set the matching engine allowed to call `execute`.
-    /// @param engine_ New authorized engine.
-    function setEngine(address engine_) external onlyOwner {
-        _setEngine(engine_);
+    /// @notice Total schedule emissions between two timestamps before pool and side allocation.
+    function emissionsBetween(uint256 start, uint256 end) public view returns (uint256) {
+        if (end <= start) return 0;
+        return cumulativeEmissionsAt(end) - cumulativeEmissionsAt(start);
     }
 
-    /// @notice Set the ERC20 paid by `distributeRewards`.
-    /// @param rewardToken_ New reward payout token.
-    function setRewardToken(address rewardToken_) external onlyOwner {
-        _setRewardToken(rewardToken_);
+    /// @notice Cumulative schedule emissions, capped after 100 annual doubling periods.
+    function cumulativeEmissionsAt(uint256 timestamp_) public view returns (uint256) {
+        uint64 start = emissionStart;
+        if (timestamp_ <= start) return 0;
+        return _cumulativeSupplyAtElapsed(timestamp_ - start) - initialSupply;
+    }
+
+    function cumulativeSupplyAt(uint256 timestamp_) external view returns (uint256) {
+        uint64 start = emissionStart;
+        if (timestamp_ <= start) return initialSupply;
+        return _cumulativeSupplyAtElapsed(timestamp_ - start);
+    }
+
+    /// @notice Maximum emission budget for one side over an interval.
+    function previewReward(address token, uint256 start, uint256 end) public view returns (uint256) {
+        _validateHookToken(token);
+        return emissionsBetween(start, end).fullMulDiv(poolEmissionShareWad, 2 * _WAD);
+    }
+
+    /// @notice Reward after applying the side's bounded quantity multiplier.
+    function previewAdjustedReward(address token, uint256 start, uint256 end, uint160 amount, uint160 benchmark)
+        public
+        view
+        returns (uint256)
+    {
+        return previewReward(token, start, end).fullMulDiv(quantityMultiplierWad(amount, benchmark), _WAD);
+    }
+
+    /// @notice Bounded quantity controller: first=100%, equal=50%, 2x=80%, 3x=90%.
+    function quantityMultiplierWad(uint160 amount, uint160 benchmark) public pure returns (uint256) {
+        if (amount == 0) return 0;
+        if (benchmark == 0) return _WAD;
+
+        uint256 ratio;
+        uint256 square;
+        if (amount >= benchmark) {
+            ratio = uint256(benchmark).fullMulDiv(_WAD, amount);
+            square = ratio.fullMulDiv(ratio, _WAD);
+            return _WAD.fullMulDiv(_WAD, _WAD + square);
+        }
+
+        ratio = uint256(amount).fullMulDiv(_WAD, benchmark);
+        square = ratio.fullMulDiv(ratio, _WAD);
+        return square.fullMulDiv(_WAD, _WAD + square);
     }
 
     /// @inheritdoc IHook
-    /// @dev
-    /// If `outgoingAmount` is nonzero, the current pool/token cursor is accrued first:
-    /// `reward = _calculateReward(poolId, token, outgoingAmount, block.timestamp - startedAt)`.
-    /// Accrued balances are stored under `bookId` and the outgoing nonce so claims remain unique
-    /// across epochs. The cursor is then overwritten with `incomingOrderNonce` and the current
-    /// timestamp. A zero incoming nonce clears the cursor because the side has no top buyer.
-    function execute(bytes32 poolId, bytes32 bookId, address token, uint160 outgoingAmount, uint32 incomingOrderNonce)
+    function execute(bytes32 poolId_, bytes32 bookId, address token, uint160 outgoingAmount, uint32 incomingOrderNonce)
         external
-        onlyEngine
     {
-        bytes32 rewardeeSlot = _rewardeeSlot(poolId, token);
-        uint256 packedRewardee;
-        /// @solidity memory-safe-assembly
-        assembly {
-            packedRewardee := sload(rewardeeSlot)
-        }
+        if (msg.sender != engine) revert NotEngine();
+        if (poolId_ != poolId) revert InvalidPool();
 
-        uint256 reward;
-        uint32 outgoingOrderNonce;
+        bool isToken0 = token == token0;
+        if (!isToken0 && token != token1) revert InvalidHookToken();
+
+        uint256 packedRewardee = isToken0 ? _token0Rewardee : _token1Rewardee;
+        (uint32 outgoingOrderNonce, uint64 startedAt, uint160 benchmark) = _unpackRewardee(packedRewardee);
+        uint160 nextReference = benchmark;
+
         if (outgoingAmount != 0) {
-            // forge-lint: disable-next-line(unsafe-typecast)
-            outgoingOrderNonce = uint32(packedRewardee);
-            // forge-lint: disable-next-line(unsafe-typecast)
-            uint64 startedAt = uint64(packedRewardee >> 32);
-            if (outgoingOrderNonce != 0 && startedAt != 0) {
-                // forge-lint: disable-next-line(unsafe-typecast)
-                uint64 duration = uint64(block.timestamp - startedAt);
-                if (duration != 0) {
-                    reward = _calculateReward(poolId, token, outgoingAmount, duration);
-                    if (reward != 0) balances[bookId][token][outgoingOrderNonce] += reward;
-                }
+            if (outgoingOrderNonce != 0 && startedAt != 0 && block.timestamp > startedAt) {
+                uint256 reward = previewAdjustedReward(token, startedAt, block.timestamp, outgoingAmount, benchmark);
+                if (reward != 0) balances[bookId][token][outgoingOrderNonce] += reward;
+                nextReference = _nextReference(benchmark, outgoingAmount, block.timestamp - startedAt);
             }
         }
 
-        // forge-lint: disable-next-line(unsafe-typecast)
-        uint256 startedAtNext = uint256(uint64(block.timestamp));
-        uint256 nextRewardee = incomingOrderNonce == 0 ? 0 : uint256(incomingOrderNonce) | (startedAtNext << 32);
-        /// @solidity memory-safe-assembly
-        assembly {
-            sstore(rewardeeSlot, nextRewardee)
-        }
-
-        emit RewardeeUpdated(poolId, bookId, token, outgoingOrderNonce, outgoingAmount, incomingOrderNonce, reward);
+        uint256 nextRewardee = _packRewardee(incomingOrderNonce, block.timestamp, nextReference);
+        if (isToken0) _token0Rewardee = nextRewardee;
+        else _token1Rewardee = nextRewardee;
     }
 
-    /// @notice Claim accrued rewards for a live order owned in the matching engine.
-    /// @param bookId Book id that scopes the order.
-    /// @param order Original packed order node.
-    /// @param token Token whose top-buyer reward balance should be claimed.
-    /// @dev
-    /// The rewarder proves ownership by asking the engine for `ownerOfOrder(orderId(bookId, order))`.
-    /// This prevents rewards from being claimed for a nonce after the corresponding order owner has
-    /// been deleted by cancel/claim.
+    /// @notice Claim previously accrued rewards while the engine still records the order owner.
     function distributeRewards(bytes32 bookId, bytes32 order, address token) external {
         uint32 nonce = uint32(uint256(order));
         uint256 amount = balances[bookId][token][nonce];
@@ -182,55 +189,81 @@ contract DeepstateRewarder is Ownable, IHook {
         if (owner == address(0)) revert NoOrderOwner();
 
         balances[bookId][token][nonce] = 0;
-        rewardToken.safeTransfer(owner, amount);
+        IMintableRewardToken(rewardToken).mint(owner, amount);
 
         emit RewardsDistributed(bookId, order, token, owner, amount);
     }
 
-    /// @notice Calculate rewards for an outgoing top order.
-    /// @param poolId Pool being rewarded.
-    /// @param token Token whose top buyer is rewarded.
-    /// @param amount Live top order amount in `token` terms.
-    /// @param duration Seconds the outgoing order was the recorded top buyer.
-    /// @return Reward token amount to accrue.
-    /// @dev Virtual so deployments can replace the simple amount-time formula.
-    function _calculateReward(bytes32 poolId, address token, uint160 amount, uint64 duration)
-        internal
-        view
-        virtual
-        returns (uint256)
-    {
-        poolId;
-        token;
-        return uint256(amount) * uint256(duration);
-    }
+    function _cumulativeSupplyAtElapsed(uint256 elapsed) internal view returns (uint256) {
+        if (elapsed > MAX_SCHEDULE_ELAPSED) elapsed = MAX_SCHEDULE_ELAPSED;
 
-    /// @notice Compute the storage slot for `rewardees[poolId][token]`.
-    /// @dev Used so `execute` can load and store the packed `Rewardee` word directly.
-    function _rewardeeSlot(bytes32 poolId, address token) private pure returns (bytes32 slot) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            let ptr := mload(0x40)
-            mstore(ptr, poolId)
-            mstore(add(ptr, 0x20), rewardees.slot)
-            let poolSlot := keccak256(ptr, 0x40)
-            mstore(ptr, token)
-            mstore(add(ptr, 0x20), poolSlot)
-            slot := keccak256(ptr, 0x40)
+        uint256 initialSupply_ = initialSupply;
+        uint256 bootstrapEmissions_ = bootstrapEmissions;
+        if (elapsed <= BOOTSTRAP_PERIOD) {
+            return initialSupply_ + bootstrapEmissions_.fullMulDiv(_bootstrapProgressWad(elapsed), _WAD);
         }
+
+        uint256 supplyAfterBootstrap = initialSupply_ + bootstrapEmissions_;
+        int256 exponent = _LN2_WAD * int256(elapsed - BOOTSTRAP_PERIOD) / int256(ANNUAL_PERIOD);
+        return supplyAfterBootstrap.fullMulDiv(_expWad(exponent), _WAD);
     }
 
-    /// @notice Validate and store a new engine.
-    function _setEngine(address engine_) private {
-        if (engine_ == address(0)) revert InvalidEngine();
-        engine = engine_;
-        emit EngineSet(engine_);
+    function _bootstrapProgressWad(uint256 elapsed) internal pure returns (uint256) {
+        int256 exponent = -(_BOOTSTRAP_DECAY_WAD * int256(elapsed) / int256(BOOTSTRAP_PERIOD));
+        uint256 numerator = _WAD - _expWad(exponent);
+        uint256 denominator = _WAD - _expWad(-_BOOTSTRAP_DECAY_WAD);
+        return numerator.fullMulDiv(_WAD, denominator);
     }
 
-    /// @notice Validate and store a new reward token.
-    function _setRewardToken(address rewardToken_) private {
-        if (rewardToken_ == address(0)) revert InvalidRewardToken();
-        rewardToken = rewardToken_;
-        emit RewardTokenSet(rewardToken_);
+    function _expWad(int256 x) internal pure returns (uint256) {
+        return uint256(FixedPointMathLib.expWad(x));
+    }
+
+    function _nextReference(uint160 benchmark, uint160 amount, uint256 elapsed) internal pure returns (uint160) {
+        if (benchmark == 0) return amount;
+        if (elapsed >= REFERENCE_WINDOW) return amount;
+
+        if (amount >= benchmark) {
+            uint256 increase = (uint256(amount) - benchmark).fullMulDiv(elapsed, REFERENCE_WINDOW);
+            return uint160(uint256(benchmark) + increase);
+        }
+
+        uint256 decrease = (uint256(benchmark) - amount).fullMulDiv(elapsed, REFERENCE_WINDOW);
+        return uint160(uint256(benchmark) - decrease);
+    }
+
+    function _packRewardee(uint32 orderNonce, uint256 timestamp_, uint160 benchmark) private pure returns (uint256) {
+        uint256 packed = uint256(benchmark) << 96;
+        if (orderNonce == 0) return packed;
+        return packed | uint256(orderNonce) | (uint256(uint64(timestamp_)) << 32);
+    }
+
+    function _unpackRewardee(uint256 packedRewardee)
+        private
+        pure
+        returns (uint32 orderNonce, uint64 startedAt, uint160 benchmark)
+    {
+        orderNonce = uint32(packedRewardee);
+        startedAt = uint64(packedRewardee >> 32);
+        benchmark = uint160(packedRewardee >> 96);
+    }
+
+    function _packedRewardee(address token) private view returns (uint256) {
+        if (token == token0) return _token0Rewardee;
+        if (token == token1) return _token1Rewardee;
+        revert InvalidHookToken();
+    }
+
+    function _validateHookToken(address token) private view {
+        if (token != token0 && token != token1) revert InvalidHookToken();
+    }
+
+    function _poolId(address token0_, address token1_) private pure returns (bytes32 id) {
+        assembly ("memory-safe") {
+            let ptr := mload(0x40)
+            mstore(ptr, token0_)
+            mstore(add(ptr, 0x20), token1_)
+            id := keccak256(ptr, 0x40)
+        }
     }
 }
