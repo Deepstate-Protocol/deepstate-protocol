@@ -43,7 +43,7 @@ contract MissingModeVotes {
 }
 
 contract DeepstateGovernanceTest is Test {
-    uint48 internal constant GOVERNANCE_START_DELAY = 25 days;
+    uint48 internal constant GOVERNANCE_START_DELAY = 15 days;
     uint48 internal constant VOTING_DELAY = 3 days;
     uint32 internal constant VOTING_PERIOD = 1 weeks;
     uint256 internal constant PROPOSAL_THRESHOLD_NUMERATOR = 1;

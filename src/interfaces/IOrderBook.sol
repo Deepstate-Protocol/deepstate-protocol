@@ -5,4 +5,5 @@ pragma solidity 0.8.28;
 interface IOrderBook {
     function orderId(bytes32 id, bytes32 order) external pure returns (bytes32);
     function ownerOfOrder(bytes32 orderId) external view returns (address);
+    function topOrder(bytes32 bookId, bool isBid) external view returns (uint32 nonce, uint160 soldAmount);
 }

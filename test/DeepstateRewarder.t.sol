@@ -6,6 +6,7 @@ import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol"
 import {ERC20} from "solady/tokens/ERC20.sol";
 import {IHook} from "deepstate-contracts/interfaces/IHook.sol";
 import {DeepstateV1} from "deepstate-contracts/DeepstateV1.sol";
+
 import {DeepstateRewarder} from "../src/DeepstateRewarder.sol";
 import {DeepstateToken} from "../src/DeepstateToken.sol";
 
@@ -49,12 +50,16 @@ contract CountingHook is IHook {
 
 contract DeepstateRewarderTest is Test {
     uint32 internal constant MAX_ORDER_NONCE = type(uint32).max;
-    uint128 internal constant INITIAL_SUPPLY = 100e18;
-    uint64 internal constant FULL_POOL_SHARE = 1e18;
+    uint96 internal constant NVDA_SIDE_CAP = 500_000_000e18;
+    uint32 internal constant NVDA_DURATION = 395 days;
+    uint96 internal constant DEEP_SIDE_CAP = 250_000_000e18;
+    uint32 internal constant DEEP_DURATION = 60 days;
+    uint160 internal constant START_QUANTITY = 1e18;
+    uint160 internal constant MAX_QUANTITY = 1_000_000e18;
     bytes32 internal constant INVALID_POOL_ID = keccak256("invalid-pool");
     bytes32 internal constant EMPTY_BOOK_ID = keccak256("empty-book");
 
-    DeepstateV1 internal engine;
+    DeepstateV1 internal deepstate;
     DeepstateRewarder internal rewarder;
     bytes32 internal configuredPoolId;
     RewardTestERC20 internal token0;
@@ -65,6 +70,8 @@ contract DeepstateRewarderTest is Test {
     address internal bob = address(0xB0B);
 
     function setUp() public {
+        vm.warp(1_000_000);
+
         RewardTestERC20 a = new RewardTestERC20("A", "A");
         RewardTestERC20 b = new RewardTestERC20("B", "B");
         if (address(a) < address(b)) {
@@ -75,11 +82,19 @@ contract DeepstateRewarderTest is Test {
             token1 = a;
         }
 
-        engine = new DeepstateV1();
+        deepstate = new DeepstateV1();
         rewardToken = new RewardTestERC20("Reward", "RWD");
-        configuredPoolId = engine.poolId(address(token0), address(token1));
-        rewarder = _deployRewarder(uint64(block.timestamp), INITIAL_SUPPLY, INITIAL_SUPPLY, FULL_POOL_SHARE);
-        engine.setPoolHookConfig(address(token0), address(token1), address(rewarder), true, true);
+        configuredPoolId = deepstate.poolId(address(token0), address(token1));
+        rewarder = _deployRewarder(
+            address(rewardToken),
+            NVDA_SIDE_CAP,
+            NVDA_DURATION,
+            START_QUANTITY,
+            MAX_QUANTITY,
+            START_QUANTITY,
+            MAX_QUANTITY
+        );
+        deepstate.setPoolHookConfig(address(token0), address(token1), address(rewarder), true, true);
 
         _fundAndApprove(alice);
         _fundAndApprove(bob);
@@ -87,346 +102,463 @@ contract DeepstateRewarderTest is Test {
 
     function test_ImmutableConfiguration() public view {
         assertEq(rewarder.owner(), address(this));
-        assertEq(rewarder.engine(), address(engine));
+        assertEq(rewarder.deepstate(), address(deepstate));
         assertEq(rewarder.rewardToken(), address(rewardToken));
-        assertEq(rewarder.poolId(), engine.poolId(address(token0), address(token1)));
+        assertEq(rewarder.poolId(), configuredPoolId);
         assertEq(rewarder.token0(), address(token0));
         assertEq(rewarder.token1(), address(token1));
-        assertEq(rewarder.emissionStart(), block.timestamp);
-        assertEq(rewarder.initialSupply(), INITIAL_SUPPLY);
-        assertEq(rewarder.bootstrapEmissions(), INITIAL_SUPPLY);
-        assertEq(rewarder.poolEmissionShareWad(), FULL_POOL_SHARE);
+        assertEq(rewarder.sideEmissionCap(), NVDA_SIDE_CAP);
+        assertEq(rewarder.emissionDuration(), NVDA_DURATION);
+        assertEq(rewarder.token0StartQuantity(), START_QUANTITY);
+        assertEq(rewarder.token0MaxQuantity(), MAX_QUANTITY);
+        assertEq(rewarder.token1StartQuantity(), START_QUANTITY);
+        assertEq(rewarder.token1MaxQuantity(), MAX_QUANTITY);
+        assertGt(rewarder.emissionLogDenominatorWad(), 0);
+        assertGt(rewarder.token0QuantityLogWad(), 0);
+        assertGt(rewarder.token1QuantityLogWad(), 0);
     }
 
     function test_ConstructorValidation() public {
-        bytes32 pid = configuredPoolId;
-
-        vm.expectRevert(DeepstateRewarder.InvalidEngine.selector);
-        new DeepstateRewarder(
-            address(this),
+        vm.expectRevert(DeepstateRewarder.InvalidOwner.selector);
+        _newRewarder(
             address(0),
+            address(deepstate),
             address(rewardToken),
-            pid,
-            address(token0),
-            address(token1),
-            uint64(block.timestamp),
-            INITIAL_SUPPLY,
-            INITIAL_SUPPLY,
-            FULL_POOL_SHARE
-        );
-
-        vm.expectRevert(DeepstateRewarder.InvalidRewardToken.selector);
-        new DeepstateRewarder(
-            address(this),
-            address(engine),
-            address(0),
-            pid,
-            address(token0),
-            address(token1),
-            uint64(block.timestamp),
-            INITIAL_SUPPLY,
-            INITIAL_SUPPLY,
-            FULL_POOL_SHARE
-        );
-
-        vm.expectRevert(DeepstateRewarder.InvalidPool.selector);
-        new DeepstateRewarder(
-            address(this),
-            address(engine),
-            address(rewardToken),
-            bytes32(0),
-            address(token0),
-            address(token1),
-            uint64(block.timestamp),
-            INITIAL_SUPPLY,
-            INITIAL_SUPPLY,
-            FULL_POOL_SHARE
-        );
-
-        vm.expectRevert(DeepstateRewarder.InvalidPool.selector);
-        new DeepstateRewarder(
-            address(this),
-            address(engine),
-            address(rewardToken),
-            INVALID_POOL_ID,
-            address(token0),
-            address(token1),
-            uint64(block.timestamp),
-            INITIAL_SUPPLY,
-            INITIAL_SUPPLY,
-            FULL_POOL_SHARE
-        );
-
-        vm.expectRevert(DeepstateRewarder.InvalidPool.selector);
-        new DeepstateRewarder(
-            address(this),
-            address(engine),
-            address(rewardToken),
-            INVALID_POOL_ID,
-            address(0),
-            address(token1),
-            uint64(block.timestamp),
-            INITIAL_SUPPLY,
-            INITIAL_SUPPLY,
-            FULL_POOL_SHARE
-        );
-
-        vm.expectRevert(DeepstateRewarder.InvalidPool.selector);
-        new DeepstateRewarder(
-            address(this),
-            address(engine),
-            address(rewardToken),
-            pid,
-            address(token1),
-            address(token0),
-            uint64(block.timestamp),
-            INITIAL_SUPPLY,
-            INITIAL_SUPPLY,
-            FULL_POOL_SHARE
-        );
-
-        vm.expectRevert(DeepstateRewarder.InvalidPoolShare.selector);
-        _deployRewarder(uint64(block.timestamp), INITIAL_SUPPLY, INITIAL_SUPPLY, 0);
-
-        vm.expectRevert(DeepstateRewarder.InvalidPoolShare.selector);
-        _deployRewarder(uint64(block.timestamp), INITIAL_SUPPLY, INITIAL_SUPPLY, uint64(1e18 + 1));
-
-        vm.expectRevert(DeepstateRewarder.InvalidEmissionSchedule.selector);
-        _deployRewarder(0, INITIAL_SUPPLY, INITIAL_SUPPLY, FULL_POOL_SHARE);
-
-        vm.expectRevert(DeepstateRewarder.InvalidEmissionSchedule.selector);
-        _deployRewarder(uint64(block.timestamp), 0, 0, FULL_POOL_SHARE);
-
-        vm.expectRevert(DeepstateRewarder.InvalidEmissionSchedule.selector);
-        _deployRewarder(uint64(block.timestamp), INITIAL_SUPPLY, INITIAL_SUPPLY - 1, FULL_POOL_SHARE);
-    }
-
-    function test_EmissionScheduleHitsMilestonesAndSmoothsBoundary() public view {
-        uint256 start = rewarder.emissionStart();
-
-        assertEq(rewarder.cumulativeSupplyAt(start), INITIAL_SUPPLY);
-        assertEq(rewarder.cumulativeSupplyAt(start + 30 days), INITIAL_SUPPLY * 2);
-        assertApproxEqAbs(rewarder.cumulativeSupplyAt(start + 395 days), INITIAL_SUPPLY * 4, 1e6);
-
-        uint256 beforeBoundary = rewarder.emissionsBetween(start + 30 days - 1, start + 30 days);
-        uint256 afterBoundary = rewarder.emissionsBetween(start + 30 days, start + 30 days + 1);
-        assertApproxEqRel(beforeBoundary, afterBoundary, 1e12);
-    }
-
-    function test_EmissionScheduleIsZeroBeforeStartAndForReversedIntervals() public view {
-        uint256 start = rewarder.emissionStart();
-        assertEq(rewarder.cumulativeEmissionsAt(start - 1), 0);
-        assertEq(rewarder.emissionsBetween(start + 10, start + 10), 0);
-        assertEq(rewarder.emissionsBetween(start + 11, start + 10), 0);
-    }
-
-    function test_EmissionScheduleCapsWithoutRevertingAfterOneHundredYears() public view {
-        uint256 start = rewarder.emissionStart();
-        uint256 capTime = start + rewarder.MAX_SCHEDULE_ELAPSED();
-        uint256 cappedSupply = rewarder.cumulativeSupplyAt(capTime);
-
-        assertGt(cappedSupply, INITIAL_SUPPLY);
-        assertEq(rewarder.cumulativeSupplyAt(capTime + 1), cappedSupply);
-        assertEq(rewarder.cumulativeSupplyAt(type(uint256).max), cappedSupply);
-        assertEq(rewarder.emissionsBetween(capTime, type(uint256).max), 0);
-    }
-
-    function testFuzz_EmissionAccountingIsMonotonicAndAdditive(uint64 firstOffset, uint64 secondOffset) public view {
-        uint256 range = rewarder.MAX_SCHEDULE_ELAPSED() + 365 days;
-        uint256 first = uint256(firstOffset) % range;
-        uint256 second = uint256(secondOffset) % range;
-        if (first > second) (first, second) = (second, first);
-
-        uint256 start = rewarder.emissionStart();
-        uint256 firstCumulative = rewarder.cumulativeEmissionsAt(start + first);
-        uint256 secondCumulative = rewarder.cumulativeEmissionsAt(start + second);
-        assertLe(firstCumulative, secondCumulative);
-        assertEq(rewarder.emissionsBetween(start + first, start + second), secondCumulative - firstCumulative);
-    }
-
-    function test_PoolAllocationAndSidesHardCapSchedule() public {
-        DeepstateRewarder partialRewarder =
-            _deployRewarder(uint64(block.timestamp), INITIAL_SUPPLY, INITIAL_SUPPLY, uint64(600_000_000_000_000_000));
-        uint256 start = block.timestamp + 1 days;
-        uint256 end = start + 1 hours;
-        uint256 poolBudget = partialRewarder.emissionsBetween(start, end) * 60 / 100;
-
-        uint256 token0Budget = partialRewarder.previewReward(address(token0), start, end);
-        uint256 token1Budget = partialRewarder.previewReward(address(token1), start, end);
-        assertApproxEqAbs(token0Budget + token1Budget, poolBudget, 1);
-        assertEq(token0Budget, token1Budget);
-
-        vm.expectRevert(DeepstateRewarder.InvalidHookToken.selector);
-        partialRewarder.previewReward(address(rewardToken), start, end);
-    }
-
-    function test_QuantityControllerHasPinnedBoundedResponse() public view {
-        assertEq(rewarder.quantityMultiplierWad(0, 100), 0);
-        assertEq(rewarder.quantityMultiplierWad(100, 0), 1e18);
-        assertEq(rewarder.quantityMultiplierWad(100, 100), 0.5e18);
-        assertEq(rewarder.quantityMultiplierWad(200, 100), 0.8e18);
-        assertEq(rewarder.quantityMultiplierWad(300, 100), 0.9e18);
-        assertEq(rewarder.quantityMultiplierWad(50, 100), 0.2e18);
-        assertLt(rewarder.quantityMultiplierWad(type(uint160).max, 1), 1e18 + 1);
-    }
-
-    function testFuzz_QuantityControllerNeverExceedsSchedule(uint160 amount, uint160 benchmark) public view {
-        uint256 multiplier = rewarder.quantityMultiplierWad(amount, benchmark);
-        assertLe(multiplier, 1e18);
-
-        uint256 start = block.timestamp;
-        uint256 end = start + 1 days;
-        assertLe(
-            rewarder.previewAdjustedReward(address(token0), start, end, amount, benchmark),
-            rewarder.previewReward(address(token0), start, end)
-        );
-    }
-
-    function testFuzz_QuantityControllerIsMonotonic(uint160 firstAmount, uint160 secondAmount, uint160 benchmark)
-        public
-        view
-    {
-        if (firstAmount > secondAmount) (firstAmount, secondAmount) = (secondAmount, firstAmount);
-        assertLe(
-            rewarder.quantityMultiplierWad(firstAmount, benchmark),
-            rewarder.quantityMultiplierWad(secondAmount, benchmark)
-        );
-    }
-
-    function test_QuantityControllerIsInvariantToTokenDecimalScale() public view {
-        uint256 sixDecimalFactor = rewarder.quantityMultiplierWad(2_000_000, 1_000_000);
-        uint256 eighteenDecimalFactor = rewarder.quantityMultiplierWad(2e18, 1e18);
-        assertEq(sixDecimalFactor, eighteenDecimalFactor);
-        assertEq(sixDecimalFactor, 0.8e18);
-    }
-
-    function test_RewardeeViewsSupportBothSidesAndRejectUnknownToken() public {
-        (uint32 nonce, uint64 startedAt) = rewarder.rewardees(address(token1));
-        assertEq(nonce, 0);
-        assertEq(startedAt, 0);
-        assertEq(rewarder.referenceAmount(address(token1)), 0);
-
-        vm.expectRevert(DeepstateRewarder.InvalidHookToken.selector);
-        rewarder.rewardees(address(rewardToken));
-        vm.expectRevert(DeepstateRewarder.InvalidHookToken.selector);
-        rewarder.referenceAmount(address(rewardToken));
-    }
-
-    function test_FirstRewardeeGetsFullSideBudgetThenConsistentQuantityGetsHalf() public {
-        bytes32 pid = rewarder.poolId();
-        bytes32 id = engine.bookId(address(token0), address(token1), 0);
-
-        vm.prank(address(engine));
-        rewarder.execute(pid, id, address(token0), 0, 2);
-        (, uint64 firstStartedAt) = rewarder.rewardees(address(token0));
-        vm.warp(vm.getBlockTimestamp() + 1 hours);
-
-        uint256 firstBudget = rewarder.previewReward(address(token0), firstStartedAt, vm.getBlockTimestamp());
-        vm.prank(address(engine));
-        rewarder.execute(pid, id, address(token0), 100, 3);
-        assertEq(rewarder.balances(id, address(token0), 2), firstBudget);
-        assertEq(rewarder.referenceAmount(address(token0)), 100);
-
-        (, uint64 secondStartedAt) = rewarder.rewardees(address(token0));
-        vm.warp(vm.getBlockTimestamp() + 1 hours);
-        uint256 secondBudget = rewarder.previewReward(address(token0), secondStartedAt, vm.getBlockTimestamp());
-        vm.prank(address(engine));
-        rewarder.execute(pid, id, address(token0), 100, 4);
-
-        assertEq(rewarder.balances(id, address(token0), 3), secondBudget / 2);
-        assertEq(rewarder.referenceAmount(address(token0)), 100);
-    }
-
-    function test_ReferenceUsesTimeWeightedEmaAndSurvivesEmptySide() public {
-        bytes32 pid = rewarder.poolId();
-
-        vm.prank(address(engine));
-        rewarder.execute(pid, EMPTY_BOOK_ID, address(token0), 0, 1);
-        vm.warp(vm.getBlockTimestamp() + 1 days);
-        vm.prank(address(engine));
-        rewarder.execute(pid, EMPTY_BOOK_ID, address(token0), 100e18, 2);
-        assertEq(rewarder.referenceAmount(address(token0)), 100e18);
-
-        vm.warp(vm.getBlockTimestamp() + 1 days);
-        vm.prank(address(engine));
-        rewarder.execute(pid, EMPTY_BOOK_ID, address(token0), 170e18, 0);
-        (uint32 nonce, uint64 startedAt) = rewarder.rewardees(address(token0));
-        assertEq(nonce, 0);
-        assertEq(startedAt, 0);
-        assertEq(rewarder.referenceAmount(address(token0)), 110e18);
-
-        vm.prank(address(engine));
-        rewarder.execute(pid, EMPTY_BOOK_ID, address(token0), 0, 2);
-        assertEq(rewarder.referenceAmount(address(token0)), 110e18);
-    }
-
-    function test_ReferenceMovesDownByElapsedTimeAndCapsAtFullWindow() public {
-        bytes32 pid = rewarder.poolId();
-
-        vm.prank(address(engine));
-        rewarder.execute(pid, EMPTY_BOOK_ID, address(token0), 0, 1);
-        vm.warp(vm.getBlockTimestamp() + 1 days);
-        vm.prank(address(engine));
-        rewarder.execute(pid, EMPTY_BOOK_ID, address(token0), 100e18, 2);
-
-        vm.warp(vm.getBlockTimestamp() + 1 days);
-        vm.prank(address(engine));
-        rewarder.execute(pid, EMPTY_BOOK_ID, address(token0), 30e18, 3);
-        assertEq(rewarder.referenceAmount(address(token0)), 90e18);
-
-        vm.warp(vm.getBlockTimestamp() + rewarder.REFERENCE_WINDOW());
-        vm.prank(address(engine));
-        rewarder.execute(pid, EMPTY_BOOK_ID, address(token0), 40e18, 4);
-        assertEq(rewarder.referenceAmount(address(token0)), 40e18);
-    }
-
-    function test_RewarderAccruesWhenTopBidIsDisplacedAndDistributes() public {
-        bytes32 id = engine.bookId(address(token0), address(token1), 0);
-
-        vm.prank(alice);
-        bytes32 aliceBid = engine.fill(_fill(0, _order(10, 5, 0), true, false, false));
-        (uint32 firstNonce, uint64 firstStartedAt) = rewarder.rewardees(address(token0));
-        assertEq(firstNonce, MAX_ORDER_NONCE);
-
-        vm.warp(vm.getBlockTimestamp() + 11);
-        uint256 expectedReward = rewarder.previewReward(address(token0), firstStartedAt, vm.getBlockTimestamp());
-        vm.prank(bob);
-        engine.fill(_fill(0, _order(11, 7, 0), true, false, false));
-
-        assertEq(rewarder.balances(id, address(token0), MAX_ORDER_NONCE), expectedReward);
-        assertEq(rewarder.referenceAmount(address(token0)), 5);
-
-        rewarder.distributeRewards(id, aliceBid, address(token0));
-        assertEq(rewardToken.balanceOf(alice), expectedReward);
-        assertEq(rewarder.balances(id, address(token0), MAX_ORDER_NONCE), 0);
-    }
-
-    function test_RevokedMinterRoleFreezesClaimsWithoutLosingAccrual() public {
-        DeepstateToken deep = new DeepstateToken(address(this), "Deepstate", "DEEP");
-        DeepstateRewarder roleRewarder = new DeepstateRewarder(
-            address(this),
-            address(engine),
-            address(deep),
             configuredPoolId,
             address(token0),
             address(token1),
-            uint64(block.timestamp),
-            INITIAL_SUPPLY,
-            INITIAL_SUPPLY,
-            FULL_POOL_SHARE
+            NVDA_SIDE_CAP,
+            NVDA_DURATION,
+            START_QUANTITY,
+            MAX_QUANTITY,
+            START_QUANTITY,
+            MAX_QUANTITY
+        );
+
+        vm.expectRevert(DeepstateRewarder.InvalidDeepstate.selector);
+        _newRewarder(
+            address(this),
+            address(0),
+            address(rewardToken),
+            configuredPoolId,
+            address(token0),
+            address(token1),
+            NVDA_SIDE_CAP,
+            NVDA_DURATION,
+            START_QUANTITY,
+            MAX_QUANTITY,
+            START_QUANTITY,
+            MAX_QUANTITY
+        );
+
+        vm.expectRevert(DeepstateRewarder.InvalidRewardToken.selector);
+        _newRewarder(
+            address(this),
+            address(deepstate),
+            address(0),
+            configuredPoolId,
+            address(token0),
+            address(token1),
+            NVDA_SIDE_CAP,
+            NVDA_DURATION,
+            START_QUANTITY,
+            MAX_QUANTITY,
+            START_QUANTITY,
+            MAX_QUANTITY
+        );
+
+        vm.expectRevert(DeepstateRewarder.InvalidPool.selector);
+        _newRewarder(
+            address(this),
+            address(deepstate),
+            address(rewardToken),
+            INVALID_POOL_ID,
+            address(token0),
+            address(token1),
+            NVDA_SIDE_CAP,
+            NVDA_DURATION,
+            START_QUANTITY,
+            MAX_QUANTITY,
+            START_QUANTITY,
+            MAX_QUANTITY
+        );
+
+        vm.expectRevert(DeepstateRewarder.InvalidPool.selector);
+        _newRewarder(
+            address(this),
+            address(deepstate),
+            address(rewardToken),
+            configuredPoolId,
+            address(token1),
+            address(token0),
+            NVDA_SIDE_CAP,
+            NVDA_DURATION,
+            START_QUANTITY,
+            MAX_QUANTITY,
+            START_QUANTITY,
+            MAX_QUANTITY
+        );
+
+        vm.expectRevert(DeepstateRewarder.InvalidEmissionSchedule.selector);
+        _deployRewarder(
+            address(rewardToken), 0, NVDA_DURATION, START_QUANTITY, MAX_QUANTITY, START_QUANTITY, MAX_QUANTITY
+        );
+
+        vm.expectRevert(DeepstateRewarder.InvalidEmissionSchedule.selector);
+        _deployRewarder(
+            address(rewardToken),
+            NVDA_SIDE_CAP,
+            uint32(30 days - 1),
+            START_QUANTITY,
+            MAX_QUANTITY,
+            START_QUANTITY,
+            MAX_QUANTITY
+        );
+
+        vm.expectRevert(DeepstateRewarder.InvalidQuantitySchedule.selector);
+        _deployRewarder(
+            address(rewardToken), NVDA_SIDE_CAP, NVDA_DURATION, 0, MAX_QUANTITY, START_QUANTITY, MAX_QUANTITY
+        );
+
+        vm.expectRevert(DeepstateRewarder.InvalidQuantitySchedule.selector);
+        _deployRewarder(
+            address(rewardToken),
+            NVDA_SIDE_CAP,
+            NVDA_DURATION,
+            START_QUANTITY,
+            START_QUANTITY,
+            START_QUANTITY,
+            MAX_QUANTITY
+        );
+
+        vm.expectRevert(DeepstateRewarder.InvalidQuantitySchedule.selector);
+        _deployRewarder(
+            address(rewardToken),
+            NVDA_SIDE_CAP,
+            NVDA_DURATION,
+            START_QUANTITY,
+            uint160(999e18),
+            START_QUANTITY,
+            MAX_QUANTITY
+        );
+    }
+
+    function test_LogEmissionScheduleMatchesSelectedNVDA_CHECKPOINTS() public view {
+        _assertApproxTokens(rewarder.cumulativeEmissionsAtElapsed(1 days), 6_184_677.733838e18);
+        _assertApproxTokens(rewarder.cumulativeEmissionsAtElapsed(7 days), 39_556_599.780835e18);
+        _assertApproxTokens(rewarder.cumulativeEmissionsAtElapsed(15 days), 76_477_114.24066e18);
+        _assertApproxTokens(rewarder.cumulativeEmissionsAtElapsed(30 days), 130_738_490.324383e18);
+        _assertApproxTokens(rewarder.cumulativeEmissionsAtElapsed(60 days), 207_215_604.565042e18);
+        _assertApproxTokens(rewarder.cumulativeEmissionsAtElapsed(180 days), 367_029_344.314536e18);
+        _assertApproxTokens(rewarder.cumulativeEmissionsAtElapsed(365 days), 486_192_683.463157e18);
+        assertEq(rewarder.cumulativeEmissionsAtElapsed(395 days), NVDA_SIDE_CAP);
+        assertEq(rewarder.cumulativeEmissionsAtElapsed(type(uint256).max), NVDA_SIDE_CAP);
+    }
+
+    function test_LogEmissionScheduleMatchesSelectedDEEP_CHECKPOINTS() public {
+        DeepstateRewarder deepRewarder = _deployRewarder(
+            address(rewardToken),
+            DEEP_SIDE_CAP,
+            DEEP_DURATION,
+            START_QUANTITY,
+            MAX_QUANTITY,
+            START_QUANTITY,
+            MAX_QUANTITY
+        );
+
+        _assertApproxTokens(deepRewarder.cumulativeEmissionsAtElapsed(1 days), 7_461_645.741908e18);
+        _assertApproxTokens(deepRewarder.cumulativeEmissionsAtElapsed(7 days), 47_723_963.482222e18);
+        _assertApproxTokens(deepRewarder.cumulativeEmissionsAtElapsed(15 days), 92_267_561.607136e18);
+        _assertApproxTokens(deepRewarder.cumulativeEmissionsAtElapsed(30 days), 157_732_438.392864e18);
+        assertEq(deepRewarder.cumulativeEmissionsAtElapsed(60 days), DEEP_SIDE_CAP);
+        assertEq(deepRewarder.cumulativeEmissionsAtElapsed(365 days), DEEP_SIDE_CAP);
+    }
+
+    function testFuzz_EmissionAccountingIsMonotonicAndCapped(uint32 firstOffset, uint32 secondOffset) public view {
+        uint256 first = bound(firstOffset, 0, 500 days);
+        uint256 second = bound(secondOffset, 0, 500 days);
+        if (first > second) (first, second) = (second, first);
+
+        uint256 firstCumulative = rewarder.cumulativeEmissionsAtElapsed(first);
+        uint256 secondCumulative = rewarder.cumulativeEmissionsAtElapsed(second);
+        assertLe(firstCumulative, secondCumulative);
+        assertLe(secondCumulative, NVDA_SIDE_CAP);
+    }
+
+    function test_SideClocksActivateIndependentlyAndPersistAcrossEmptyBook() public {
+        assertEq(rewarder.emissionStart(address(token0)), 0);
+        assertEq(rewarder.emissionStart(address(token1)), 0);
+        assertEq(rewarder.fullRewardQuantityAt(address(token0), block.timestamp), START_QUANTITY);
+
+        _execute(address(token0), EMPTY_BOOK_ID, 0, 1);
+        uint64 token0Start = rewarder.emissionStart(address(token0));
+        assertEq(token0Start, block.timestamp);
+        assertEq(rewarder.emissionStart(address(token1)), 0);
+
+        vm.warp(block.timestamp + 1 days);
+        _execute(address(token0), EMPTY_BOOK_ID, START_QUANTITY, 0);
+        (uint32 nonce, uint64 startedAt) = rewarder.rewardees(address(token0));
+        assertEq(nonce, 0);
+        assertEq(startedAt, 0);
+        assertEq(rewarder.emissionStart(address(token0)), token0Start);
+
+        vm.warp(block.timestamp + 1 days);
+        _execute(address(token0), EMPTY_BOOK_ID, 0, 2);
+        assertEq(rewarder.emissionStart(address(token0)), token0Start);
+        assertGt(rewarder.cumulativeEmissionsAt(address(token0), block.timestamp), 0);
+    }
+
+    function test_FullRewardQuantityMatchesMillionFoldCurve() public view {
+        assertEq(rewarder.fullRewardQuantityAtElapsed(address(token0), 0), 1e18);
+        assertApproxEqRel(rewarder.fullRewardQuantityAtElapsed(address(token0), 5 days), 10e18, 1e10);
+        assertApproxEqRel(rewarder.fullRewardQuantityAtElapsed(address(token0), 10 days), 100e18, 1e10);
+        assertApproxEqRel(rewarder.fullRewardQuantityAtElapsed(address(token0), 15 days), 1_000e18, 1e10);
+        assertApproxEqRel(rewarder.fullRewardQuantityAtElapsed(address(token0), 20 days), 10_000e18, 1e10);
+        assertApproxEqRel(rewarder.fullRewardQuantityAtElapsed(address(token0), 25 days), 100_000e18, 1e10);
+        assertEq(rewarder.fullRewardQuantityAtElapsed(address(token0), 30 days), 1_000_000e18);
+        assertEq(rewarder.fullRewardQuantityAtElapsed(address(token0), 300 days), 1_000_000e18);
+    }
+
+    function test_FullRewardQuantityMatchesNVDAFiveThousandCurve() public {
+        DeepstateRewarder nvdaRewarder = _deployRewarder(
+            address(rewardToken), NVDA_SIDE_CAP, NVDA_DURATION, 1e18, 5_000e18, START_QUANTITY, MAX_QUANTITY
+        );
+
+        assertApproxEqRel(nvdaRewarder.fullRewardQuantityAtElapsed(address(token0), 1 days), 1.328309e18, 1e12);
+        assertApproxEqRel(nvdaRewarder.fullRewardQuantityAtElapsed(address(token0), 5 days), 4.135186e18, 1e12);
+        assertApproxEqRel(nvdaRewarder.fullRewardQuantityAtElapsed(address(token0), 15 days), 70.710678e18, 1e12);
+        assertApproxEqRel(nvdaRewarder.fullRewardQuantityAtElapsed(address(token0), 25 days), 1_209.135588e18, 1e12);
+        assertEq(nvdaRewarder.fullRewardQuantityAtElapsed(address(token0), 30 days), 5_000e18);
+    }
+
+    function testFuzz_FullRewardQuantityIsMonotonic(uint32 firstOffset, uint32 secondOffset) public view {
+        uint256 first = bound(firstOffset, 0, 60 days);
+        uint256 second = bound(secondOffset, 0, 60 days);
+        if (first > second) (first, second) = (second, first);
+        assertLe(
+            rewarder.fullRewardQuantityAtElapsed(address(token0), first),
+            rewarder.fullRewardQuantityAtElapsed(address(token0), second)
+        );
+    }
+
+    function test_IntegratedRewardsMatchIndependentNumericalVectors() public view {
+        _assertApproxTokens(rewarder.previewRewardAtElapsed(address(token0), 0, 1 days, 1e18), 4_962_407.843893e18);
+        _assertApproxTokens(rewarder.previewRewardAtElapsed(address(token0), 0, 5 days, 1e18), 11_677_688.307573e18);
+        _assertApproxTokens(rewarder.previewRewardAtElapsed(address(token0), 0, 30 days, 1e18), 12_782_943.635188e18);
+        _assertApproxTokens(rewarder.previewRewardAtElapsed(address(token0), 0, 30 days, 10e18), 40_127_802.701263e18);
+        _assertApproxTokens(
+            rewarder.previewRewardAtElapsed(address(token0), 0, 30 days, 1_000e18), 85_170_174.746157e18
+        );
+        _assertApproxTokens(
+            rewarder.previewRewardAtElapsed(address(token0), 5 days, 20 days, 100e18), 34_843_198.007817e18
+        );
+        _assertApproxTokens(
+            rewarder.previewRewardAtElapsed(address(token0), 30 days, 60 days, 500_000e18), 38_238_557.12033e18
+        );
+    }
+
+    function test_QuantityAtOrAboveTargetReceivesFullSchedule() public view {
+        uint256 fullBudget = rewarder.cumulativeEmissionsAtElapsed(30 days);
+        assertEq(rewarder.previewRewardAtElapsed(address(token0), 0, 30 days, MAX_QUANTITY), fullBudget);
+        assertEq(rewarder.previewRewardAtElapsed(address(token0), 0, 30 days, type(uint160).max), fullBudget);
+    }
+
+    function test_RewardIntegrationIsAdditiveAcrossCursorUpdates() public view {
+        uint160 amount = 100e18;
+        uint256 whole = rewarder.previewRewardAtElapsed(address(token0), 0, 30 days, amount);
+        uint256 split = rewarder.previewRewardAtElapsed(address(token0), 0, 7 days, amount)
+            + rewarder.previewRewardAtElapsed(address(token0), 7 days, 19 days, amount)
+            + rewarder.previewRewardAtElapsed(address(token0), 19 days, 30 days, amount);
+        assertApproxEqAbs(split, whole, 10);
+    }
+
+    function testFuzz_RewardIntegrationIsAdditive(
+        uint32 firstOffset,
+        uint32 splitOffset,
+        uint32 endOffset,
+        uint160 amount
+    ) public view {
+        uint256 first = bound(firstOffset, 0, NVDA_DURATION);
+        uint256 split = bound(splitOffset, first, NVDA_DURATION);
+        uint256 end = bound(endOffset, split, NVDA_DURATION);
+
+        uint256 whole = rewarder.previewRewardAtElapsed(address(token0), first, end, amount);
+        uint256 partitioned = rewarder.previewRewardAtElapsed(address(token0), first, split, amount)
+            + rewarder.previewRewardAtElapsed(address(token0), split, end, amount);
+        uint256 delta = partitioned > whole ? partitioned - whole : whole - partitioned;
+        assertLe(delta, 1e9 + whole / 1e12);
+    }
+
+    function testFuzz_AdjustedRewardIsBoundedAndMonotonic(
+        uint32 startOffset,
+        uint32 duration_,
+        uint160 first,
+        uint160 second
+    ) public view {
+        uint256 start = bound(startOffset, 0, 500 days);
+        uint256 end = start + bound(duration_, 0, 500 days);
+        if (first > second) (first, second) = (second, first);
+
+        uint256 firstReward = rewarder.previewRewardAtElapsed(address(token0), start, end, first);
+        uint256 secondReward = rewarder.previewRewardAtElapsed(address(token0), start, end, second);
+        uint256 scheduleBudget =
+            rewarder.cumulativeEmissionsAtElapsed(end) - rewarder.cumulativeEmissionsAtElapsed(start);
+        assertLe(firstReward, secondReward);
+        assertLe(secondReward, scheduleBudget);
+    }
+
+    function test_ExecuteAccruesOutgoingTopAndTracksHardCap() public {
+        _execute(address(token0), EMPTY_BOOK_ID, 0, 1);
+        uint64 start = rewarder.emissionStart(address(token0));
+        vm.warp(block.timestamp + NVDA_DURATION + 1 days);
+
+        _execute(address(token0), EMPTY_BOOK_ID, type(uint160).max, 2);
+        assertEq(rewarder.balances(EMPTY_BOOK_ID, address(token0), 1), NVDA_SIDE_CAP);
+        assertEq(rewarder.totalAccrued(address(token0)), NVDA_SIDE_CAP);
+        assertEq(rewarder.cumulativeEmissionsAt(address(token0), block.timestamp), NVDA_SIDE_CAP);
+        assertEq(start + NVDA_DURATION < block.timestamp, true);
+
+        vm.warp(block.timestamp + 1 days);
+        _execute(address(token0), EMPTY_BOOK_ID, type(uint160).max, 3);
+        assertEq(rewarder.balances(EMPTY_BOOK_ID, address(token0), 2), 0);
+        assertEq(rewarder.totalAccrued(address(token0)), NVDA_SIDE_CAP);
+    }
+
+    function test_EngineHookAccruesAndDistributesDisplacedBid() public {
+        bytes32 id = deepstate.bookId(address(token0), address(token1), 0);
+
+        vm.prank(alice);
+        bytes32 aliceBid = deepstate.fill(_fill(0, _order(0, 5e18, 0), true, false, false));
+        (, uint64 startedAt) = rewarder.rewardees(address(token1));
+        vm.warp(block.timestamp + 1 days);
+
+        uint256 expected = rewarder.previewReward(address(token1), startedAt, block.timestamp, 5e18);
+        vm.prank(bob);
+        deepstate.fill(_fill(0, _order(1, 7e18, 0), true, false, false));
+
+        assertEq(rewarder.balances(id, address(token1), MAX_ORDER_NONCE), expected);
+        rewarder.distributeRewards(id, aliceBid, address(token1));
+        assertEq(rewardToken.balanceOf(alice), expected);
+        assertEq(rewarder.balances(id, address(token1), MAX_ORDER_NONCE), 0);
+    }
+
+    function test_DistributeAccruesLiveTopBeforeTransferAndCancel() public {
+        bytes32 id = deepstate.bookId(address(token0), address(token1), 0);
+
+        vm.prank(alice);
+        bytes32 aliceBid = deepstate.fill(_fill(0, _order(0, 5e18, 0), true, false, false));
+        (, uint64 startedAt) = rewarder.rewardees(address(token1));
+        vm.warp(block.timestamp + 1 days);
+        uint256 expected = rewarder.previewReward(address(token1), startedAt, block.timestamp, 5e18);
+
+        rewarder.distributeRewards(id, aliceBid, address(token1));
+        assertEq(rewardToken.balanceOf(alice), expected);
+        (, uint64 claimedAt) = rewarder.rewardees(address(token1));
+        assertEq(claimedAt, block.timestamp);
+
+        vm.prank(alice);
+        deepstate.cancel(address(token0), address(token1), 0, aliceBid);
+        assertEq(rewarder.balances(id, address(token1), MAX_ORDER_NONCE), 0);
+        assertEq(rewardToken.balanceOf(alice), expected);
+    }
+
+    function test_ClaimTimeAccrualUsesLiveQuantityAfterPartialFill() public {
+        bytes32 id = deepstate.bookId(address(token0), address(token1), 0);
+
+        vm.prank(alice);
+        bytes32 aliceBid = deepstate.fill(_fill(0, _order(0, 10e18, 0), true, false, false));
+        (, uint64 firstStart) = rewarder.rewardees(address(token1));
+        vm.warp(block.timestamp + 1 days);
+        uint256 firstReward = rewarder.previewReward(address(token1), firstStart, block.timestamp, 10e18);
+
+        vm.prank(bob);
+        deepstate.fill(_fill(0, _order(0, 4e18, 0), false, true, false));
+        (, uint64 secondStart) = rewarder.rewardees(address(token1));
+        (uint32 liveNonce, uint160 liveQuantity) = deepstate.topOrder(id, true);
+        assertEq(liveNonce, MAX_ORDER_NONCE);
+        assertEq(liveQuantity, 6e18);
+
+        vm.warp(block.timestamp + 1 days);
+        uint256 secondReward = rewarder.previewReward(address(token1), secondStart, block.timestamp, 6e18);
+        rewarder.distributeRewards(id, aliceBid, address(token1));
+        assertApproxEqAbs(rewardToken.balanceOf(alice), firstReward + secondReward, 1);
+    }
+
+    function test_AskSideAccruesIndependently() public {
+        bytes32 id = deepstate.bookId(address(token0), address(token1), 0);
+
+        vm.prank(alice);
+        bytes32 aliceAsk = deepstate.fill(_fill(0, _order(20, 8e18, 0), false, false, false));
+        (, uint64 startedAt) = rewarder.rewardees(address(token0));
+        assertEq(rewarder.emissionStart(address(token1)), 0);
+
+        vm.warp(block.timestamp + 1 days);
+        uint256 expected = rewarder.previewReward(address(token0), startedAt, block.timestamp, 8e18);
+        vm.prank(bob);
+        deepstate.fill(_fill(0, _order(19, 9e18, 0), false, false, false));
+
+        rewarder.distributeRewards(id, aliceAsk, address(token0));
+        assertEq(rewardToken.balanceOf(alice), expected);
+    }
+
+    function test_RouterTopOrderReportsBothSidesAndEmptyState() public {
+        bytes32 id = deepstate.bookId(address(token0), address(token1), 0);
+        (uint32 nonce, uint160 quantity) = deepstate.topOrder(id, true);
+        assertEq(nonce, 0);
+        assertEq(quantity, 0);
+
+        vm.prank(alice);
+        deepstate.fill(_fill(0, _order(0, 5e18, 0), true, false, false));
+        vm.prank(bob);
+        deepstate.fill(_fill(0, _order(20, 8e18, 0), false, false, false));
+
+        (nonce, quantity) = deepstate.topOrder(id, true);
+        assertEq(nonce, MAX_ORDER_NONCE);
+        assertEq(quantity, 5e18);
+        (nonce, quantity) = deepstate.topOrder(id, false);
+        assertEq(nonce, MAX_ORDER_NONCE - 1);
+        assertEq(quantity, 8e18);
+    }
+
+    function test_WrongBookCannotTriggerLiveAccrual() public {
+        bytes32 id = deepstate.bookId(address(token0), address(token1), 0);
+        vm.prank(alice);
+        bytes32 aliceBid = deepstate.fill(_fill(0, _order(0, 5e18, 0), true, false, false));
+        vm.warp(block.timestamp + 1 days);
+
+        rewarder.distributeRewards(EMPTY_BOOK_ID, aliceBid, address(token1));
+        assertEq(rewardToken.balanceOf(alice), 0);
+        assertEq(rewarder.balances(id, address(token1), MAX_ORDER_NONCE), 0);
+    }
+
+    function test_DistributeRequiresOrderOwnershipWhenBalanceExists() public {
+        bytes32 id = deepstate.bookId(address(token0), address(token1), 0);
+        vm.prank(alice);
+        bytes32 aliceBid = deepstate.fill(_fill(0, _order(0, 5e18, 0), true, false, false));
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(bob);
+        deepstate.fill(_fill(0, _order(1, 7e18, 0), true, false, false));
+
+        vm.prank(alice);
+        deepstate.cancel(address(token0), address(token1), 0, aliceBid);
+        vm.expectRevert(DeepstateRewarder.NoOrderOwner.selector);
+        rewarder.distributeRewards(id, aliceBid, address(token1));
+    }
+
+    function test_RevokedMinterRoleRollsBackClaimAccrual() public {
+        DeepstateToken deep = new DeepstateToken(address(this), "Deepstate", "DEEP");
+        DeepstateRewarder roleRewarder = _deployRewarder(
+            address(deep), NVDA_SIDE_CAP, NVDA_DURATION, START_QUANTITY, MAX_QUANTITY, START_QUANTITY, MAX_QUANTITY
         );
         bytes32 minterRole = deep.MINTER_ROLE();
         deep.grantRole(minterRole, address(roleRewarder));
-        engine.setPoolHookConfig(address(token0), address(token1), address(roleRewarder), true, true);
+        deepstate.setPoolHookConfig(address(token0), address(token1), address(roleRewarder), true, true);
 
-        bytes32 id = engine.bookId(address(token0), address(token1), 0);
+        bytes32 id = deepstate.bookId(address(token0), address(token1), 0);
         vm.prank(alice);
-        bytes32 aliceBid = engine.fill(_fill(0, _order(10, 5, 0), true, false, false));
-        vm.warp(vm.getBlockTimestamp() + 11);
-        vm.prank(bob);
-        engine.fill(_fill(0, _order(11, 7, 0), true, false, false));
-
-        uint256 amount = roleRewarder.balances(id, address(token0), MAX_ORDER_NONCE);
+        bytes32 aliceBid = deepstate.fill(_fill(0, _order(0, 5e18, 0), true, false, false));
+        vm.warp(block.timestamp + 1 days);
+        (, uint64 beforeClaimStart) = roleRewarder.rewardees(address(token1));
         deep.revokeRole(minterRole, address(roleRewarder));
 
         vm.expectRevert(
@@ -434,222 +566,142 @@ contract DeepstateRewarderTest is Test {
                 IAccessControl.AccessControlUnauthorizedAccount.selector, address(roleRewarder), minterRole
             )
         );
-        roleRewarder.distributeRewards(id, aliceBid, address(token0));
-        assertEq(roleRewarder.balances(id, address(token0), MAX_ORDER_NONCE), amount);
-        assertEq(deep.balanceOf(alice), 0);
+        roleRewarder.distributeRewards(id, aliceBid, address(token1));
+        (, uint64 afterFailedClaimStart) = roleRewarder.rewardees(address(token1));
+        assertEq(afterFailedClaimStart, beforeClaimStart);
+        assertEq(roleRewarder.totalAccrued(address(token1)), 0);
 
         deep.grantRole(minterRole, address(roleRewarder));
-        roleRewarder.distributeRewards(id, aliceBid, address(token0));
-        assertEq(roleRewarder.balances(id, address(token0), MAX_ORDER_NONCE), 0);
-        assertEq(deep.balanceOf(alice), amount);
+        roleRewarder.distributeRewards(id, aliceBid, address(token1));
+        assertGt(deep.balanceOf(alice), 0);
     }
 
-    function test_RewarderAccruesBothSidesWithinCombinedPoolBudget() public {
-        bytes32 id = engine.bookId(address(token0), address(token1), 0);
-
-        vm.prank(alice);
-        engine.fill(_fill(0, _order(10, 5, 0), true, false, false));
-        vm.prank(alice);
-        engine.fill(_fill(0, _order(20, 8, 0), false, false, false));
-        (, uint64 startedAt) = rewarder.rewardees(address(token0));
-
-        vm.warp(vm.getBlockTimestamp() + 1 hours);
-        vm.prank(bob);
-        engine.fill(_fill(0, _order(11, 7, 0), true, false, false));
-        vm.prank(bob);
-        engine.fill(_fill(0, _order(19, 9, 0), false, false, false));
-
-        uint256 bidReward = rewarder.balances(id, address(token0), MAX_ORDER_NONCE);
-        uint256 askReward = rewarder.balances(id, address(token1), MAX_ORDER_NONCE - 1);
-        uint256 currentTime = vm.getBlockTimestamp();
-        assertEq(bidReward, rewarder.previewReward(address(token0), startedAt, currentTime));
-        assertEq(askReward, rewarder.previewReward(address(token1), startedAt, currentTime));
-        assertLe(bidReward + askReward, rewarder.emissionsBetween(startedAt, currentTime));
-    }
-
-    function test_RewarderAccruesAdjustedAmountAfterPartialFill() public {
-        bytes32 id = engine.bookId(address(token0), address(token1), 0);
-
-        vm.prank(alice);
-        engine.fill(_fill(0, _order(10, 5, 0), true, false, false));
-        vm.warp(vm.getBlockTimestamp() + 7);
-
-        uint256 firstStart = vm.getBlockTimestamp() - 7;
-        vm.prank(bob);
-        engine.fill(_fill(0, _order(10, 2, 0), false, true, false));
-        uint256 expected = rewarder.previewReward(address(token0), firstStart, vm.getBlockTimestamp());
-
-        vm.warp(vm.getBlockTimestamp() + 3);
-        uint256 secondStart = vm.getBlockTimestamp() - 3;
-        uint256 secondReward =
-            rewarder.previewAdjustedReward(address(token0), secondStart, vm.getBlockTimestamp(), 3, 5);
-        vm.prank(bob);
-        engine.fill(_fill(0, _order(10, 1, 0), false, true, false));
-
-        assertEq(rewarder.balances(id, address(token0), MAX_ORDER_NONCE), expected + secondReward);
-    }
-
-    function test_TopBidFillAndCancelTransitionsAccrue() public {
-        bytes32 id = engine.bookId(address(token0), address(token1), 0);
-
-        vm.prank(alice);
-        bytes32 aliceBid = engine.fill(_fill(0, _order(10, 5, 0), true, false, false));
-        vm.prank(bob);
-        engine.fill(_fill(0, _order(9, 7, 0), true, false, false));
-        (, uint64 startedAt) = rewarder.rewardees(address(token0));
-
-        vm.warp(vm.getBlockTimestamp() + 13);
-        vm.prank(alice);
-        engine.cancel(address(token0), address(token1), 0, aliceBid);
-
-        assertEq(
-            rewarder.balances(id, address(token0), MAX_ORDER_NONCE),
-            rewarder.previewReward(address(token0), startedAt, vm.getBlockTimestamp())
-        );
-        (uint32 nextNonce,) = rewarder.rewardees(address(token0));
-        assertEq(nextNonce, MAX_ORDER_NONCE - 1);
-    }
-
-    function test_DistributeRewardsRequiresOrderToStillExist() public {
-        bytes32 id = engine.bookId(address(token0), address(token1), 0);
-
-        vm.prank(alice);
-        bytes32 aliceBid = engine.fill(_fill(0, _order(10, 5, 0), true, false, false));
-        vm.warp(vm.getBlockTimestamp() + 11);
-        vm.prank(bob);
-        engine.fill(_fill(0, _order(11, 7, 0), true, false, false));
-
-        vm.prank(alice);
-        engine.cancel(address(token0), address(token1), 0, aliceBid);
-
-        vm.expectRevert(DeepstateRewarder.NoOrderOwner.selector);
-        rewarder.distributeRewards(id, aliceBid, address(token0));
-    }
-
-    function test_ExecuteValidationAndZeroBalanceClaim() public {
-        bytes32 validPoolId = rewarder.poolId();
-
-        vm.expectRevert(DeepstateRewarder.NotEngine.selector);
-        rewarder.execute(INVALID_POOL_ID, EMPTY_BOOK_ID, address(token0), 1, MAX_ORDER_NONCE);
+    function test_ExecuteValidationAndViewsRejectUnknownTokens() public {
+        vm.expectRevert(DeepstateRewarder.NotDeepstate.selector);
+        rewarder.execute(configuredPoolId, EMPTY_BOOK_ID, address(token0), 1, 1);
 
         vm.expectRevert(DeepstateRewarder.InvalidPool.selector);
-        vm.prank(address(engine));
-        rewarder.execute(INVALID_POOL_ID, EMPTY_BOOK_ID, address(token0), 1, MAX_ORDER_NONCE);
+        vm.prank(address(deepstate));
+        rewarder.execute(INVALID_POOL_ID, EMPTY_BOOK_ID, address(token0), 1, 1);
 
         vm.expectRevert(DeepstateRewarder.InvalidHookToken.selector);
-        vm.prank(address(engine));
-        rewarder.execute(validPoolId, EMPTY_BOOK_ID, address(rewardToken), 1, MAX_ORDER_NONCE);
+        vm.prank(address(deepstate));
+        rewarder.execute(configuredPoolId, EMPTY_BOOK_ID, address(rewardToken), 1, 1);
 
-        rewarder.distributeRewards(EMPTY_BOOK_ID, _order(10, 1, MAX_ORDER_NONCE), address(token0));
-        assertEq(rewardToken.balanceOf(alice), 0);
+        vm.expectRevert(DeepstateRewarder.InvalidHookToken.selector);
+        rewarder.rewardees(address(rewardToken));
+        vm.expectRevert(DeepstateRewarder.InvalidHookToken.selector);
+        rewarder.emissionStart(address(rewardToken));
+        vm.expectRevert(DeepstateRewarder.InvalidHookToken.selector);
+        rewarder.fullRewardQuantityAtElapsed(address(rewardToken), 1 days);
+        vm.expectRevert(DeepstateRewarder.InvalidHookToken.selector);
+        rewarder.distributeRewards(EMPTY_BOOK_ID, bytes32(0), address(rewardToken));
     }
 
-    function test_ExecuteStaysInsideRouterGasBudgetForFreshAndWarmAccrual() public {
-        bytes32 pid = rewarder.poolId();
-        bytes32 id = engine.bookId(address(token0), address(token1), 0);
-
+    function test_ExecuteStaysInsideDeepstateHookGasBudget() public {
         uint256 beforeGas = gasleft();
-        vm.prank(address(engine));
-        rewarder.execute(pid, id, address(token0), 0, 1);
-        uint256 firstCursorGas = beforeGas - gasleft();
+        _execute(address(token0), EMPTY_BOOK_ID, 0, 1);
+        uint256 installGas = beforeGas - gasleft();
 
-        vm.warp(vm.getBlockTimestamp() + 1 hours);
+        vm.warp(block.timestamp + 1 days);
         beforeGas = gasleft();
-        vm.prank(address(engine));
-        rewarder.execute(pid, id, address(token0), 100, 1);
+        _execute(address(token0), EMPTY_BOOK_ID, 5e18, 2);
         uint256 freshAccrualGas = beforeGas - gasleft();
 
-        vm.warp(vm.getBlockTimestamp() + 1 hours);
+        vm.warp(block.timestamp + 1 days);
         beforeGas = gasleft();
-        vm.prank(address(engine));
-        rewarder.execute(pid, id, address(token0), 100, 1);
-        uint256 warmAccrualGas = beforeGas - gasleft();
+        _execute(address(token0), EMPTY_BOOK_ID, 5e18, 3);
+        uint256 warmBalanceGas = beforeGas - gasleft();
 
-        emit log_named_uint("execute first cursor gas", firstCursorGas);
+        emit log_named_uint("execute install gas", installGas);
         emit log_named_uint("execute fresh accrual gas", freshAccrualGas);
-        emit log_named_uint("execute warm accrual gas", warmAccrualGas);
-        assertLt(firstCursorGas, 200_000);
+        emit log_named_uint("execute existing balance gas", warmBalanceGas);
+        assertLt(installGas, 200_000);
         assertLt(freshAccrualGas, 200_000);
-        assertLt(warmAccrualGas, 200_000);
-        assertLt(warmAccrualGas, freshAccrualGas);
-    }
-
-    function test_ExecuteBeyondScheduleHorizonDoesNotRevertOrExceedCap() public {
-        bytes32 pid = rewarder.poolId();
-        vm.prank(address(engine));
-        rewarder.execute(pid, EMPTY_BOOK_ID, address(token0), 0, 1);
-        (, uint64 startedAt) = rewarder.rewardees(address(token0));
-
-        vm.warp(vm.getBlockTimestamp() + rewarder.MAX_SCHEDULE_ELAPSED() + 365 days);
-        uint256 cap = rewarder.previewReward(address(token0), startedAt, vm.getBlockTimestamp());
-        uint256 beforeGas = gasleft();
-        vm.prank(address(engine));
-        rewarder.execute(pid, EMPTY_BOOK_ID, address(token0), type(uint160).max, 2);
-        uint256 horizonAccrualGas = beforeGas - gasleft();
-
-        assertEq(rewarder.balances(EMPTY_BOOK_ID, address(token0), 1), cap);
-        emit log_named_uint("execute horizon accrual gas", horizonAccrualGas);
-        assertLt(horizonAccrualGas, 200_000);
-    }
-
-    function test_ExecuteAtSameTimestampAndBeforeEmissionStartAccruesNoReward() public {
-        DeepstateRewarder futureRewarder =
-            _deployRewarder(uint64(block.timestamp + 1 days), INITIAL_SUPPLY, INITIAL_SUPPLY, FULL_POOL_SHARE);
-        bytes32 pid = futureRewarder.poolId();
-
-        vm.prank(address(engine));
-        futureRewarder.execute(pid, EMPTY_BOOK_ID, address(token0), 0, 1);
-        vm.prank(address(engine));
-        futureRewarder.execute(pid, EMPTY_BOOK_ID, address(token0), 100, 1);
-        assertEq(futureRewarder.balances(EMPTY_BOOK_ID, address(token0), 1), 0);
-        assertEq(futureRewarder.referenceAmount(address(token0)), 0);
-
-        vm.warp(vm.getBlockTimestamp() + 1 hours);
-        vm.prank(address(engine));
-        futureRewarder.execute(pid, EMPTY_BOOK_ID, address(token0), 100, 2);
-        assertEq(futureRewarder.balances(EMPTY_BOOK_ID, address(token0), 1), 0);
-        assertEq(futureRewarder.referenceAmount(address(token0)), 100);
+        assertLt(warmBalanceGas, 200_000);
     }
 
     function test_RevertingRewardHookDoesNotBlockFill() public {
-        engine.setPoolHookConfig(address(token0), address(token1), address(new RevertingHook()), true, false);
+        deepstate.setPoolHookConfig(address(token0), address(token1), address(new RevertingHook()), true, false);
 
         vm.prank(alice);
-        bytes32 resting = engine.fill(_fill(0, _order(10, 5, 0), true, false, false));
+        bytes32 resting = deepstate.fill(_fill(0, _order(10, 5e18, 0), true, false, false));
 
-        bytes32 id = engine.bookId(address(token0), address(token1), 0);
-        assertEq(engine.ownerOfOrder(engine.orderId(id, resting)), alice);
+        bytes32 id = deepstate.bookId(address(token0), address(token1), 0);
+        assertEq(deepstate.ownerOfOrder(deepstate.orderId(id, resting)), alice);
     }
 
     function test_InactiveSideCancelDoesNotCallHook() public {
         CountingHook hook = new CountingHook();
-        engine.setPoolHookConfig(address(token0), address(token1), address(hook), true, false);
+        deepstate.setPoolHookConfig(address(token0), address(token1), address(hook), true, false);
 
         vm.prank(alice);
-        bytes32 ask = engine.fill(_fill(0, _order(10, 5, 0), false, false, false));
+        bytes32 ask = deepstate.fill(_fill(0, _order(10, 5e18, 0), false, false, false));
         vm.prank(alice);
-        engine.cancel(address(token0), address(token1), 0, ask);
+        deepstate.cancel(address(token0), address(token1), 0, ask);
 
         assertEq(hook.calls(), 0);
         assertEq(hook.lastToken(), address(0));
     }
 
-    function _deployRewarder(uint64 start, uint128 supply, uint128 bootstrap, uint64 poolShare)
-        internal
-        returns (DeepstateRewarder deployed)
-    {
-        deployed = new DeepstateRewarder(
+    function _deployRewarder(
+        address rewardToken_,
+        uint96 sideCap,
+        uint32 duration,
+        uint160 token0Start,
+        uint160 token0Max,
+        uint160 token1Start,
+        uint160 token1Max
+    ) internal returns (DeepstateRewarder deployed) {
+        return _newRewarder(
             address(this),
-            address(engine),
-            address(rewardToken),
+            address(deepstate),
+            rewardToken_,
             configuredPoolId,
             address(token0),
             address(token1),
-            start,
-            supply,
-            bootstrap,
-            poolShare
+            sideCap,
+            duration,
+            token0Start,
+            token0Max,
+            token1Start,
+            token1Max
         );
+    }
+
+    function _newRewarder(
+        address owner,
+        address deepstate_,
+        address rewardToken_,
+        bytes32 poolId_,
+        address token0_,
+        address token1_,
+        uint96 sideCap,
+        uint32 duration,
+        uint160 token0Start,
+        uint160 token0Max,
+        uint160 token1Start,
+        uint160 token1Max
+    ) internal returns (DeepstateRewarder deployed) {
+        deployed = new DeepstateRewarder(
+            owner,
+            deepstate_,
+            rewardToken_,
+            poolId_,
+            token0_,
+            token1_,
+            sideCap,
+            duration,
+            token0Start,
+            token0Max,
+            token1Start,
+            token1Max
+        );
+    }
+
+    function _execute(address token, bytes32 bookId, uint160 outgoingAmount, uint32 incomingNonce) internal {
+        vm.prank(address(deepstate));
+        rewarder.execute(configuredPoolId, bookId, token, outgoingAmount, incomingNonce);
     }
 
     function _fill(uint256 epoch, bytes32 order, bool isBid, bool noRest, bool fillOrKill)
@@ -669,16 +721,21 @@ contract DeepstateRewarderTest is Test {
     }
 
     function _fundAndApprove(address user) internal {
-        token0.mint(user, 1_000_000);
-        token1.mint(user, 1_000_000);
+        token0.mint(user, 1_000_000_000e18);
+        token1.mint(user, 1_000_000_000e18);
 
         vm.startPrank(user);
-        token0.approve(address(engine), type(uint256).max);
-        token1.approve(address(engine), type(uint256).max);
+        token0.approve(address(deepstate), type(uint256).max);
+        token1.approve(address(deepstate), type(uint256).max);
         vm.stopPrank();
     }
 
     function _order(int32 price, uint160 quantity, uint32 nonce) internal pure returns (bytes32) {
+        // forge-lint: disable-next-line(unsafe-typecast)
         return bytes32((uint256(uint32(price)) << 224) | (uint256(quantity) << 64) | uint256(nonce));
+    }
+
+    function _assertApproxTokens(uint256 actual, uint256 expected) internal pure {
+        assertApproxEqRel(actual, expected, 1e10);
     }
 }
