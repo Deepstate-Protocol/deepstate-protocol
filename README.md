@@ -79,9 +79,12 @@ enforces the immutable cap independently of the token's role system.
 
 Rewarders mint DEEP directly to order owners at claim time and each holds a
 revocable `DeepstateToken.MINTER_ROLE`. Governance may revoke either role.
-Active orders must call `distributeRewards` immediately before `cancel` in the
-same transaction; claim-time accounting reads the current top quantity before
-paying, while cancel permanently deletes engine ownership.
+Anyone can call `registerClaimant` for an active order to cache its engine-verified
+reward recipient before `cancel` permanently deletes engine ownership. Registration
+is permissionless, but the claimant always comes from Deepstate. `distributeRewards`
+registers active orders lazily when necessary, and registered orders can claim
+their final accrual after cancellation without wallet-level transaction batching.
+An order deleted before either registration path permanently loses its claim.
 
 ## Auction Flow
 

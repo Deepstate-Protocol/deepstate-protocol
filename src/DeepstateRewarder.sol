@@ -61,7 +61,10 @@ contract DeepstateRewarder is Ownable, IHook {
     bytes32 private _token1BookId;
 
     mapping(bytes32 bookId => mapping(address token => mapping(uint32 orderNonce => uint256 balance))) public balances;
+    /// @notice Verified reward recipient for a canonical Deepstate order id.
+    mapping(bytes32 orderId => address claimant) public claimants;
 
+    event ClaimantRegistered(bytes32 indexed orderId, address indexed claimant);
     event RewardsDistributed(bytes32 bookId, bytes32 order, address token, address owner, uint256 amount);
 
     error InvalidOwner();
@@ -278,8 +281,15 @@ contract DeepstateRewarder is Ownable, IHook {
         else _token1State = nextState;
     }
 
-    /// @notice Accrue a live top order and pay all rewards while its engine ownership still exists.
-    /// @dev Call this immediately before cancelling an active order in the same transaction.
+    /// @notice Cache the engine-verified owner that may claim rewards for an order after it is deleted.
+    /// @dev Anyone may register an active order, but the engine alone determines its claimant.
+    function registerClaimant(bytes32 bookId, bytes32 order) external returns (address claimant) {
+        return _resolveClaimant(bookId, order);
+    }
+
+    /// @notice Accrue a live top order and pay all rewards to its verified claimant.
+    /// @dev Lazily registers an active order. Register before cancellation to preserve claims after
+    /// the engine permanently deletes ownership.
     function distributeRewards(bytes32 bookId, bytes32 order, address token) external {
         bool isToken0 = token == token0;
         if (!isToken0 && token != token1) revert InvalidHookToken();
@@ -293,8 +303,7 @@ contract DeepstateRewarder is Ownable, IHook {
         uint256 amount = balances[bookId][token][nonce];
         if (amount == 0 && !isCurrent) return;
 
-        address owner = IOrderBook(deepstate).ownerOfOrder(IOrderBook(deepstate).orderId(bookId, order));
-        if (owner == address(0)) revert NoOrderOwner();
+        address claimant = _resolveClaimant(bookId, order);
 
         if (isCurrent && block.timestamp > topStartedAt) {
             (uint32 liveNonce, uint160 liveAmount) = IOrderBook(deepstate).topOrder(bookId, !isToken0);
@@ -314,9 +323,22 @@ contract DeepstateRewarder is Ownable, IHook {
 
         if (amount == 0) return;
         balances[bookId][token][nonce] = 0;
-        IMintableRewardToken(rewardToken).mint(owner, amount);
+        IMintableRewardToken(rewardToken).mint(claimant, amount);
 
-        emit RewardsDistributed(bookId, order, token, owner, amount);
+        emit RewardsDistributed(bookId, order, token, claimant, amount);
+    }
+
+    function _resolveClaimant(bytes32 bookId, bytes32 order) private returns (address claimant) {
+        IOrderBook orderBook = IOrderBook(deepstate);
+        bytes32 id = orderBook.orderId(bookId, order);
+        claimant = claimants[id];
+        if (claimant != address(0)) return claimant;
+
+        claimant = orderBook.ownerOfOrder(id);
+        if (claimant == address(0)) revert NoOrderOwner();
+
+        claimants[id] = claimant;
+        emit ClaimantRegistered(id, claimant);
     }
 
     function _rampAdjustedReward(
