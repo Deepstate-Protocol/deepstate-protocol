@@ -3,12 +3,10 @@ pragma solidity 0.8.28;
 
 import {Ownable} from "solady/auth/Ownable.sol";
 import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IHook} from "deepstate-contracts/interfaces/IHook.sol";
 import {IOrderBook} from "./interfaces/IOrderBook.sol";
-
-interface IMintableRewardToken {
-    function mint(address to, uint256 amount) external;
-}
 
 /// @title Deepstate Rewarder
 /// @notice Pool-specific accounting for a finite DEEP market-making program.
@@ -19,6 +17,7 @@ interface IMintableRewardToken {
 /// Amounts below that target earn linearly; amounts at or above it earn the full scheduled budget.
 contract DeepstateRewarder is Ownable, IHook {
     using FixedPointMathLib for uint256;
+    using SafeERC20 for IERC20;
 
     /// @notice Time constant used by the logarithmic cumulative emission curve.
     uint256 public constant EMISSION_TIME_CONSTANT = 30 days;
@@ -31,7 +30,7 @@ contract DeepstateRewarder is Ownable, IHook {
 
     /// @notice Deepstate order book authorized to update reward cursors.
     address public immutable deepstate;
-    /// @notice Token minted when rewards are claimed.
+    /// @notice Prefunded token transferred when rewards are claimed.
     address public immutable rewardToken;
     /// @notice Sorted-token pool id accepted by this rewarder.
     bytes32 public immutable poolId;
@@ -323,7 +322,7 @@ contract DeepstateRewarder is Ownable, IHook {
 
         if (amount == 0) return;
         balances[bookId][token][nonce] = 0;
-        IMintableRewardToken(rewardToken).mint(claimant, amount);
+        IERC20(rewardToken).safeTransfer(claimant, amount);
 
         emit RewardsDistributed(bookId, order, token, claimant, amount);
     }

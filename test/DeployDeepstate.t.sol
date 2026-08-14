@@ -39,8 +39,11 @@ contract DeployDeepstateTest is DeployDeepstate, Test {
 
         assertTrue(deployment.deepstate.hasRole(adminRole, address(deployment.governor)));
         assertFalse(deployment.deepstate.hasRole(adminRole, address(this)));
-        assertTrue(deployment.deepstate.hasRole(minterRole, address(deployment.nvdaRewarder)));
+        assertFalse(deployment.deepstate.hasRole(minterRole, address(deployment.nvdaRewarder)));
+        assertFalse(deployment.deepstate.hasRole(minterRole, address(this)));
         assertTrue(deployment.deepstate.hasRole(minterRole, additionalMinter));
+        assertEq(deployment.deepstate.totalSupply(), NVDA_REWARD_ALLOCATION);
+        assertEq(deployment.deepstate.balanceOf(address(deployment.nvdaRewarder)), NVDA_REWARD_ALLOCATION);
 
         assertEq(deployment.vault.owner(), address(deployment.governor));
         assertEq(deployment.nvdaRewarder.owner(), address(deployment.governor));
@@ -67,6 +70,7 @@ contract DeployDeepstateTest is DeployDeepstate, Test {
         vm.prank(additionalMinter);
         deployment.deepstate.mint(alice, 1e18);
         assertEq(deployment.deepstate.balanceOf(alice), 1e18);
+        assertEq(deployment.deepstate.totalSupply(), NVDA_REWARD_ALLOCATION + 1e18);
     }
 
     function testConfigReadsExplicitGovernanceLaunchParameters() public {

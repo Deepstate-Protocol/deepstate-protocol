@@ -2,7 +2,6 @@
 pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
-import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {ERC20} from "solady/tokens/ERC20.sol";
 import {IHook} from "deepstate-contracts/interfaces/IHook.sol";
 import {DeepstateV1} from "deepstate-contracts/DeepstateV1.sol";
@@ -50,7 +49,7 @@ contract CountingHook is IHook {
 
 contract DeepstateRewarderTest is Test {
     uint32 internal constant MAX_ORDER_NONCE = type(uint32).max;
-    uint96 internal constant NVDA_SIDE_CAP = 750_000_000e18;
+    uint96 internal constant NVDA_SIDE_CAP = 500_000_000e18;
     uint32 internal constant NVDA_DURATION = 395 days;
     uint160 internal constant START_QUANTITY = 1e18;
     uint160 internal constant MAX_QUANTITY = 1_000_000e18;
@@ -92,6 +91,7 @@ contract DeepstateRewarderTest is Test {
             START_QUANTITY,
             MAX_QUANTITY
         );
+        rewardToken.mint(address(rewarder), uint256(NVDA_SIDE_CAP) * 2);
         deepstate.setPoolHookConfig(address(token0), address(token1), address(rewarder), true, true);
 
         _fundAndApprove(alice);
@@ -111,6 +111,7 @@ contract DeepstateRewarderTest is Test {
         assertEq(rewarder.token0MaxQuantity(), MAX_QUANTITY);
         assertEq(rewarder.token1StartQuantity(), START_QUANTITY);
         assertEq(rewarder.token1MaxQuantity(), MAX_QUANTITY);
+        assertEq(rewardToken.balanceOf(address(rewarder)), uint256(NVDA_SIDE_CAP) * 2);
         assertGt(rewarder.emissionLogDenominatorWad(), 0);
         assertGt(rewarder.token0QuantityLogWad(), 0);
         assertGt(rewarder.token1QuantityLogWad(), 0);
@@ -242,13 +243,13 @@ contract DeepstateRewarderTest is Test {
     }
 
     function test_LogEmissionScheduleMatchesSelectedNVDA_CHECKPOINTS() public view {
-        _assertApproxTokens(rewarder.cumulativeEmissionsAtElapsed(1 days), 9_277_016.600757e18);
-        _assertApproxTokens(rewarder.cumulativeEmissionsAtElapsed(7 days), 59_334_899.671253e18);
-        _assertApproxTokens(rewarder.cumulativeEmissionsAtElapsed(15 days), 114_715_671.36099e18);
-        _assertApproxTokens(rewarder.cumulativeEmissionsAtElapsed(30 days), 196_107_735.486575e18);
-        _assertApproxTokens(rewarder.cumulativeEmissionsAtElapsed(60 days), 310_823_406.847563e18);
-        _assertApproxTokens(rewarder.cumulativeEmissionsAtElapsed(180 days), 550_544_016.471804e18);
-        _assertApproxTokens(rewarder.cumulativeEmissionsAtElapsed(365 days), 729_289_025.194736e18);
+        _assertApproxTokens(rewarder.cumulativeEmissionsAtElapsed(1 days), 6_184_677.733838e18);
+        _assertApproxTokens(rewarder.cumulativeEmissionsAtElapsed(7 days), 39_556_599.780835e18);
+        _assertApproxTokens(rewarder.cumulativeEmissionsAtElapsed(15 days), 76_477_114.24066e18);
+        _assertApproxTokens(rewarder.cumulativeEmissionsAtElapsed(30 days), 130_738_490.324383e18);
+        _assertApproxTokens(rewarder.cumulativeEmissionsAtElapsed(60 days), 207_215_604.565042e18);
+        _assertApproxTokens(rewarder.cumulativeEmissionsAtElapsed(180 days), 367_029_344.314536e18);
+        _assertApproxTokens(rewarder.cumulativeEmissionsAtElapsed(365 days), 486_192_683.463157e18);
         assertEq(rewarder.cumulativeEmissionsAtElapsed(395 days), NVDA_SIDE_CAP);
         assertEq(rewarder.cumulativeEmissionsAtElapsed(type(uint256).max), NVDA_SIDE_CAP);
     }
@@ -321,18 +322,18 @@ contract DeepstateRewarderTest is Test {
     }
 
     function test_IntegratedRewardsMatchIndependentNumericalVectors() public view {
-        _assertApproxTokens(rewarder.previewRewardAtElapsed(address(token0), 0, 1 days, 1e18), 7_443_611.76584e18);
-        _assertApproxTokens(rewarder.previewRewardAtElapsed(address(token0), 0, 5 days, 1e18), 17_516_532.46136e18);
-        _assertApproxTokens(rewarder.previewRewardAtElapsed(address(token0), 0, 30 days, 1e18), 19_174_415.452782e18);
-        _assertApproxTokens(rewarder.previewRewardAtElapsed(address(token0), 0, 30 days, 10e18), 60_191_704.051895e18);
+        _assertApproxTokens(rewarder.previewRewardAtElapsed(address(token0), 0, 1 days, 1e18), 4_962_407.843893e18);
+        _assertApproxTokens(rewarder.previewRewardAtElapsed(address(token0), 0, 5 days, 1e18), 11_677_688.307573e18);
+        _assertApproxTokens(rewarder.previewRewardAtElapsed(address(token0), 0, 30 days, 1e18), 12_782_943.635188e18);
+        _assertApproxTokens(rewarder.previewRewardAtElapsed(address(token0), 0, 30 days, 10e18), 40_127_802.701263e18);
         _assertApproxTokens(
-            rewarder.previewRewardAtElapsed(address(token0), 0, 30 days, 1_000e18), 127_755_262.119236e18
+            rewarder.previewRewardAtElapsed(address(token0), 0, 30 days, 1_000e18), 85_170_174.746157e18
         );
         _assertApproxTokens(
-            rewarder.previewRewardAtElapsed(address(token0), 5 days, 20 days, 100e18), 52_264_797.011726e18
+            rewarder.previewRewardAtElapsed(address(token0), 5 days, 20 days, 100e18), 34_843_198.007817e18
         );
         _assertApproxTokens(
-            rewarder.previewRewardAtElapsed(address(token0), 30 days, 60 days, 500_000e18), 57_357_835.680495e18
+            rewarder.previewRewardAtElapsed(address(token0), 30 days, 60 days, 500_000e18), 38_238_557.12033e18
         );
     }
 
@@ -594,74 +595,98 @@ contract DeepstateRewarderTest is Test {
         rewarder.registerClaimant(EMPTY_BOOK_ID, bytes32(uint256(1)));
     }
 
-    function test_RevokedMinterRoleRollsBackClaimAccrual() public {
+    function test_ClaimTransfersPrefundedDeepWithoutMintAuthority() public {
         DeepstateToken deep = new DeepstateToken(address(this), "Deepstate", "DEEP");
-        DeepstateRewarder roleRewarder = _deployRewarder(
+        DeepstateRewarder prefundedRewarder = _deployRewarder(
             address(deep), NVDA_SIDE_CAP, NVDA_DURATION, START_QUANTITY, MAX_QUANTITY, START_QUANTITY, MAX_QUANTITY
         );
         bytes32 minterRole = deep.MINTER_ROLE();
-        deep.grantRole(minterRole, address(roleRewarder));
-        deepstate.setPoolHookConfig(address(token0), address(token1), address(roleRewarder), true, true);
+        deep.grantRole(minterRole, address(this));
+        deep.mint(address(prefundedRewarder), uint256(NVDA_SIDE_CAP) * 2);
+        deep.revokeRole(minterRole, address(this));
+        deepstate.setPoolHookConfig(address(token0), address(token1), address(prefundedRewarder), true, true);
 
         bytes32 id = deepstate.bookId(address(token0), address(token1), 0);
         vm.prank(alice);
         bytes32 aliceBid = deepstate.fill(_fill(0, _order(0, 5e18, 0), true, false, false));
         vm.warp(block.timestamp + 1 days);
-        (, uint64 beforeClaimStart) = roleRewarder.rewardees(address(token1));
-        deep.revokeRole(minterRole, address(roleRewarder));
+        (, uint64 startedAt) = prefundedRewarder.rewardees(address(token1));
+        uint256 expected = prefundedRewarder.previewReward(address(token1), startedAt, block.timestamp, 5e18);
+        uint256 supplyBefore = deep.totalSupply();
+        uint256 fundingBefore = deep.balanceOf(address(prefundedRewarder));
 
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector, address(roleRewarder), minterRole
-            )
-        );
-        roleRewarder.distributeRewards(id, aliceBid, address(token1));
-        (, uint64 afterFailedClaimStart) = roleRewarder.rewardees(address(token1));
-        assertEq(afterFailedClaimStart, beforeClaimStart);
-        assertEq(roleRewarder.totalAccrued(address(token1)), 0);
-        assertEq(roleRewarder.claimants(deepstate.orderId(id, aliceBid)), address(0));
+        prefundedRewarder.distributeRewards(id, aliceBid, address(token1));
 
-        deep.grantRole(minterRole, address(roleRewarder));
-        roleRewarder.distributeRewards(id, aliceBid, address(token1));
-        assertGt(deep.balanceOf(alice), 0);
-        assertEq(roleRewarder.claimants(deepstate.orderId(id, aliceBid)), alice);
+        assertFalse(deep.hasRole(minterRole, address(prefundedRewarder)));
+        assertEq(deep.totalSupply(), supplyBefore);
+        assertEq(deep.balanceOf(address(prefundedRewarder)), fundingBefore - expected);
+        assertEq(deep.balanceOf(alice), expected);
     }
 
-    function test_RegisteredPostCancelClaimCanRetryAfterMinterRestored() public {
-        DeepstateToken deep = new DeepstateToken(address(this), "Deepstate", "DEEP");
-        DeepstateRewarder roleRewarder = _deployRewarder(
-            address(deep), NVDA_SIDE_CAP, NVDA_DURATION, START_QUANTITY, MAX_QUANTITY, START_QUANTITY, MAX_QUANTITY
+    function test_UnfundedRewarderRollsBackClaimAccrual() public {
+        DeepstateRewarder unfundedRewarder = _deployRewarder(
+            address(rewardToken),
+            NVDA_SIDE_CAP,
+            NVDA_DURATION,
+            START_QUANTITY,
+            MAX_QUANTITY,
+            START_QUANTITY,
+            MAX_QUANTITY
         );
-        bytes32 minterRole = deep.MINTER_ROLE();
-        deep.grantRole(minterRole, address(roleRewarder));
-        deepstate.setPoolHookConfig(address(token0), address(token1), address(roleRewarder), true, true);
+        deepstate.setPoolHookConfig(address(token0), address(token1), address(unfundedRewarder), true, true);
+
+        bytes32 id = deepstate.bookId(address(token0), address(token1), 0);
+        vm.prank(alice);
+        bytes32 aliceBid = deepstate.fill(_fill(0, _order(0, 5e18, 0), true, false, false));
+        vm.warp(block.timestamp + 1 days);
+        (, uint64 beforeClaimStart) = unfundedRewarder.rewardees(address(token1));
+
+        vm.expectRevert(ERC20.InsufficientBalance.selector);
+        unfundedRewarder.distributeRewards(id, aliceBid, address(token1));
+        (, uint64 afterFailedClaimStart) = unfundedRewarder.rewardees(address(token1));
+        assertEq(afterFailedClaimStart, beforeClaimStart);
+        assertEq(unfundedRewarder.totalAccrued(address(token1)), 0);
+        assertEq(unfundedRewarder.claimants(deepstate.orderId(id, aliceBid)), address(0));
+
+        rewardToken.mint(address(unfundedRewarder), uint256(NVDA_SIDE_CAP) * 2);
+        unfundedRewarder.distributeRewards(id, aliceBid, address(token1));
+        assertGt(rewardToken.balanceOf(alice), 0);
+        assertEq(unfundedRewarder.claimants(deepstate.orderId(id, aliceBid)), alice);
+    }
+
+    function test_RegisteredPostCancelClaimCanRetryAfterRewarderIsFunded() public {
+        DeepstateRewarder unfundedRewarder = _deployRewarder(
+            address(rewardToken),
+            NVDA_SIDE_CAP,
+            NVDA_DURATION,
+            START_QUANTITY,
+            MAX_QUANTITY,
+            START_QUANTITY,
+            MAX_QUANTITY
+        );
+        deepstate.setPoolHookConfig(address(token0), address(token1), address(unfundedRewarder), true, true);
 
         bytes32 id = deepstate.bookId(address(token0), address(token1), 0);
         vm.prank(alice);
         bytes32 aliceBid = deepstate.fill(_fill(0, _order(0, 5e18, 0), true, false, false));
         bytes32 aliceOrderId = deepstate.orderId(id, aliceBid);
-        roleRewarder.registerClaimant(id, aliceBid);
+        unfundedRewarder.registerClaimant(id, aliceBid);
 
         vm.warp(block.timestamp + 1 days);
         vm.prank(alice);
         deepstate.cancel(address(token0), address(token1), 0, aliceBid);
-        uint256 pending = roleRewarder.balances(id, address(token1), MAX_ORDER_NONCE);
+        uint256 pending = unfundedRewarder.balances(id, address(token1), MAX_ORDER_NONCE);
         assertGt(pending, 0);
 
-        deep.revokeRole(minterRole, address(roleRewarder));
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector, address(roleRewarder), minterRole
-            )
-        );
-        roleRewarder.distributeRewards(id, aliceBid, address(token1));
-        assertEq(roleRewarder.balances(id, address(token1), MAX_ORDER_NONCE), pending);
-        assertEq(roleRewarder.claimants(aliceOrderId), alice);
+        vm.expectRevert(ERC20.InsufficientBalance.selector);
+        unfundedRewarder.distributeRewards(id, aliceBid, address(token1));
+        assertEq(unfundedRewarder.balances(id, address(token1), MAX_ORDER_NONCE), pending);
+        assertEq(unfundedRewarder.claimants(aliceOrderId), alice);
 
-        deep.grantRole(minterRole, address(roleRewarder));
-        roleRewarder.distributeRewards(id, aliceBid, address(token1));
-        assertEq(roleRewarder.balances(id, address(token1), MAX_ORDER_NONCE), 0);
-        assertEq(deep.balanceOf(alice), pending);
+        rewardToken.mint(address(unfundedRewarder), uint256(NVDA_SIDE_CAP) * 2);
+        unfundedRewarder.distributeRewards(id, aliceBid, address(token1));
+        assertEq(unfundedRewarder.balances(id, address(token1), MAX_ORDER_NONCE), 0);
+        assertEq(rewardToken.balanceOf(alice), pending);
     }
 
     function test_ExecuteValidationAndViewsRejectUnknownTokens() public {

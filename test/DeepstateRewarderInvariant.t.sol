@@ -6,18 +6,22 @@ import {Test} from "forge-std/Test.sol";
 
 import {DeepstateRewarder} from "../src/DeepstateRewarder.sol";
 
-contract RewarderInvariantMintable {
+contract RewarderInvariantToken {
     mapping(address account => uint256 balance) public balanceOf;
 
-    function mint(address to, uint256 amount) external {
+    function transfer(address to, uint256 amount) external returns (bool) {
+        uint256 balance = balanceOf[msg.sender];
+        if (balance < amount) return false;
+        balanceOf[msg.sender] = balance - amount;
         balanceOf[to] += amount;
+        return true;
     }
 }
 
 contract DeepstateRewarderHandler is Test {
     address public constant TOKEN0 = address(0x1000);
     address public constant TOKEN1 = address(0x2000);
-    uint96 public constant SIDE_CAP = 750_000_000e18;
+    uint96 public constant SIDE_CAP = 500_000_000e18;
     uint32 public constant DURATION = 395 days;
     bytes32 public constant BOOK_ID = keccak256("invariant-book");
 
@@ -33,7 +37,7 @@ contract DeepstateRewarderHandler is Test {
     uint64 public expectedToken1Cursor;
 
     constructor() {
-        RewarderInvariantMintable rewardToken = new RewarderInvariantMintable();
+        RewarderInvariantToken rewardToken = new RewarderInvariantToken();
         bytes32 poolId = keccak256(abi.encode(TOKEN0, TOKEN1));
         rewarder = new DeepstateRewarder(
             address(this),

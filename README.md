@@ -62,7 +62,7 @@ C(t) = cap * ln(1 + t / 30 days) / ln(1 + duration / 30 days)
 
 | Pool | Per-side cap | Duration | Pool cap |
 | --- | ---: | ---: | ---: |
-| NVDA/USDG | 750,000,000 DEEP | 395 days | 1,500,000,000 DEEP |
+| NVDA/USDG | 500,000,000 DEEP | 395 days | 1,000,000,000 DEEP |
 
 The amount required for the full side budget grows geometrically for 30 days:
 
@@ -80,8 +80,9 @@ Displayed quantity below `Q(t)` earns linearly; quantity at or above it earns
 rather than sampling only entry or exit. Per-side cumulative accounting also
 enforces the immutable cap independently of the token's role system.
 
-The rewarder mints DEEP directly to order owners at claim time and holds a
-revocable `DeepstateToken.MINTER_ROLE`. Governance may revoke the role.
+The deployment pre-mints the complete 1,000,000,000 DEEP allocation into the
+rewarder. Claims transfer from that fixed balance; the rewarder never receives
+`DeepstateToken.MINTER_ROLE`. Unearned emissions remain locked in the rewarder.
 Anyone can call `registerClaimant` for an active order to cache its engine-verified
 reward recipient before `cancel` permanently deletes engine ownership. Registration
 is permissionless, but the claimant always comes from Deepstate. `distributeRewards`
@@ -119,8 +120,9 @@ forge test
 `script/DeployDeepstate.s.sol` deploys the core stack and the NVDA/USDG
 rewarder, enables that pool hook, grants the Governor `DeepstateToken`'s
 default admin role, and transfers ownership of the vault, rewarder, and
-`DeepstateV1` to `DeepstateGovernor`. The rewarder receives `MINTER_ROLE`; an
-optional additional minter may be configured for a separate emissions path.
+`DeepstateV1` to `DeepstateGovernor`. The rewarder is prefunded with its fixed
+1,000,000,000 DEEP allocation and receives no mint authority. An optional
+additional minter may be configured for a separate emissions path.
 
 Required environment variables:
 

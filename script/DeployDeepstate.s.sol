@@ -24,7 +24,8 @@ contract DeployDeepstate is Script {
     uint256 internal constant DEFAULT_QUORUM_NUMERATOR = 10;
     uint48 internal constant DEFAULT_VOTE_EXTENSION = 1 days;
 
-    uint96 internal constant NVDA_SIDE_EMISSION_CAP = 750_000_000e18;
+    uint96 internal constant NVDA_SIDE_EMISSION_CAP = 500_000_000e18;
+    uint256 internal constant NVDA_REWARD_ALLOCATION = uint256(NVDA_SIDE_EMISSION_CAP) * 2;
     uint32 internal constant NVDA_EMISSION_DURATION = 395 days;
 
     uint160 internal constant USDG_START_QUANTITY = 1e6;
@@ -98,9 +99,7 @@ contract DeployDeepstate is Script {
             config.voteExtension
         );
 
-        bytes32 minterRole = deployment.deepstate.MINTER_ROLE();
-        deployment.deepstate.grantRole(minterRole, address(deployment.nvdaRewarder));
-        if (config.deepstateMinter != address(0)) deployment.deepstate.grantRole(minterRole, config.deepstateMinter);
+        _fundRewarder(deployment.deepstate, deployment.nvdaRewarder, config.deployer, config.deepstateMinter);
         if (config.routerFeeBps != 0) deployment.router.setFeeConfig(address(deployment.vault), config.routerFeeBps);
 
         address governor = address(deployment.governor);
@@ -113,7 +112,6 @@ contract DeployDeepstate is Script {
 
         require(deployment.deepstate.hasRole(adminRole, governor), "DEEP_ADMIN");
         require(!deployment.deepstate.hasRole(adminRole, config.deployer), "DEPLOYER_DEEP_ADMIN");
-        require(deployment.deepstate.hasRole(minterRole, address(deployment.nvdaRewarder)), "NVDA_REWARDER_MINTER");
         require(deployment.vault.owner() == governor, "VAULT_OWNER");
         require(deployment.nvdaRewarder.owner() == governor, "NVDA_REWARDER_OWNER");
         require(deployment.router.owner() == governor, "ROUTER_OWNER");
@@ -172,6 +170,21 @@ contract DeployDeepstate is Script {
     function _sortTokens(address a, address b) internal pure returns (address token0, address token1) {
         require(a != b && a != address(0) && b != address(0), "INVALID_REWARD_POOL");
         return a < b ? (a, b) : (b, a);
+    }
+
+    function _fundRewarder(DeepstateToken token, DeepstateRewarder rewarder, address deployer, address additionalMinter)
+        internal
+    {
+        bytes32 minterRole = token.MINTER_ROLE();
+        token.grantRole(minterRole, deployer);
+        token.mint(address(rewarder), NVDA_REWARD_ALLOCATION);
+        token.revokeRole(minterRole, deployer);
+
+        require(!token.hasRole(minterRole, deployer), "DEPLOYER_DEEP_MINTER");
+        if (additionalMinter != address(0)) token.grantRole(minterRole, additionalMinter);
+        require(!token.hasRole(minterRole, address(rewarder)), "REWARDER_DEEP_MINTER");
+        require(token.totalSupply() == NVDA_REWARD_ALLOCATION, "DEEP_INITIAL_SUPPLY");
+        require(token.balanceOf(address(rewarder)) == NVDA_REWARD_ALLOCATION, "REWARDER_FUNDING");
     }
 
     function _deployRewarder(
