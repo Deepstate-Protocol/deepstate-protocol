@@ -24,17 +24,13 @@ contract DeployDeepstate is Script {
     uint256 internal constant DEFAULT_QUORUM_NUMERATOR = 10;
     uint48 internal constant DEFAULT_VOTE_EXTENSION = 1 days;
 
-    uint96 internal constant NVDA_SIDE_EMISSION_CAP = 500_000_000e18;
-    uint96 internal constant DEEP_SIDE_EMISSION_CAP = 250_000_000e18;
+    uint96 internal constant NVDA_SIDE_EMISSION_CAP = 750_000_000e18;
     uint32 internal constant NVDA_EMISSION_DURATION = 395 days;
-    uint32 internal constant DEEP_EMISSION_DURATION = 60 days;
 
     uint160 internal constant USDG_START_QUANTITY = 1e6;
     uint160 internal constant USDG_MAX_QUANTITY = 1_000_000e6;
     uint160 internal constant NVDA_START_QUANTITY = 1e18;
     uint160 internal constant NVDA_MAX_QUANTITY = 5_000e18;
-    uint160 internal constant DEEP_START_QUANTITY = 1e18;
-    uint160 internal constant DEEP_MAX_QUANTITY = 1_000_000e18;
 
     struct Deployment {
         DeepstateToken deepstate;
@@ -42,7 +38,6 @@ contract DeployDeepstate is Script {
         DeepstateGovernor governor;
         DeepstateV1 router;
         DeepstateRewarder nvdaRewarder;
-        DeepstateRewarder deepRewarder;
     }
 
     struct Config {
@@ -93,15 +88,6 @@ contract DeployDeepstate is Script {
             NVDA_START_QUANTITY,
             NVDA_MAX_QUANTITY
         );
-        deployment.deepRewarder = _deployRewarder(
-            config,
-            deployment,
-            address(deployment.deepstate),
-            DEEP_SIDE_EMISSION_CAP,
-            DEEP_EMISSION_DURATION,
-            DEEP_START_QUANTITY,
-            DEEP_MAX_QUANTITY
-        );
         deployment.governor = new DeepstateGovernor(
             IVotes(address(deployment.vault)),
             config.governanceStartDelay,
@@ -114,7 +100,6 @@ contract DeployDeepstate is Script {
 
         bytes32 minterRole = deployment.deepstate.MINTER_ROLE();
         deployment.deepstate.grantRole(minterRole, address(deployment.nvdaRewarder));
-        deployment.deepstate.grantRole(minterRole, address(deployment.deepRewarder));
         if (config.deepstateMinter != address(0)) deployment.deepstate.grantRole(minterRole, config.deepstateMinter);
         if (config.routerFeeBps != 0) deployment.router.setFeeConfig(address(deployment.vault), config.routerFeeBps);
 
@@ -124,26 +109,18 @@ contract DeployDeepstate is Script {
         deployment.deepstate.renounceRole(adminRole, config.deployer);
         deployment.vault.transferOwnership(governor);
         deployment.nvdaRewarder.transferOwnership(governor);
-        deployment.deepRewarder.transferOwnership(governor);
         deployment.router.transferOwnership(governor);
 
         require(deployment.deepstate.hasRole(adminRole, governor), "DEEP_ADMIN");
         require(!deployment.deepstate.hasRole(adminRole, config.deployer), "DEPLOYER_DEEP_ADMIN");
         require(deployment.deepstate.hasRole(minterRole, address(deployment.nvdaRewarder)), "NVDA_REWARDER_MINTER");
-        require(deployment.deepstate.hasRole(minterRole, address(deployment.deepRewarder)), "DEEP_REWARDER_MINTER");
         require(deployment.vault.owner() == governor, "VAULT_OWNER");
         require(deployment.nvdaRewarder.owner() == governor, "NVDA_REWARDER_OWNER");
-        require(deployment.deepRewarder.owner() == governor, "DEEP_REWARDER_OWNER");
         require(deployment.router.owner() == governor, "ROUTER_OWNER");
         require(deployment.nvdaRewarder.deepstate() == address(deployment.router), "NVDA_REWARDER_DEEPSTATE");
-        require(deployment.deepRewarder.deepstate() == address(deployment.router), "DEEP_REWARDER_DEEPSTATE");
         require(
             deployment.router.poolHook(deployment.nvdaRewarder.poolId()) == address(deployment.nvdaRewarder),
             "NVDA_REWARDER_HOOK"
-        );
-        require(
-            deployment.router.poolHook(deployment.deepRewarder.poolId()) == address(deployment.deepRewarder),
-            "DEEP_REWARDER_HOOK"
         );
         require(
             deployment.governor.governanceStart() == block.timestamp + config.governanceStartDelay, "GOVERNANCE_START"
@@ -237,6 +214,5 @@ contract DeployDeepstate is Script {
         console2.log("DeepstateGovernor", address(deployment.governor));
         console2.log("DeepstateV1", address(deployment.router));
         console2.log("NVDA/USDG DeepstateRewarder", address(deployment.nvdaRewarder));
-        console2.log("DEEP/USDG DeepstateRewarder", address(deployment.deepRewarder));
     }
 }

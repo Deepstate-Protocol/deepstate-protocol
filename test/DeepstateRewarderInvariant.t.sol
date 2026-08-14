@@ -17,7 +17,7 @@ contract RewarderInvariantMintable {
 contract DeepstateRewarderHandler is Test {
     address public constant TOKEN0 = address(0x1000);
     address public constant TOKEN1 = address(0x2000);
-    uint96 public constant SIDE_CAP = 500_000_000e18;
+    uint96 public constant SIDE_CAP = 750_000_000e18;
     uint32 public constant DURATION = 395 days;
     bytes32 public constant BOOK_ID = keccak256("invariant-book");
 

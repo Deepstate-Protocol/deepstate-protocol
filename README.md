@@ -48,9 +48,9 @@ proposals can therefore execute immediately after voting ends.
 
 ## Reward Schedule
 
-The deployment creates one immutable rewarder for NVDA/USDG and one for
-DEEP/USDG. Each side starts its own finite clock when its first top order is
-reported. Empty books do not pause a clock, and unearned emissions expire.
+The deployment creates one immutable rewarder for NVDA/USDG. Each side starts
+its own finite clock when its first top order is reported. Empty books do not
+pause a clock, and unearned emissions expire. DEEP/USDG receives no rewards.
 
 Maximum cumulative emissions use a 30-day logarithmic time constant:
 
@@ -62,8 +62,7 @@ C(t) = cap * ln(1 + t / 30 days) / ln(1 + duration / 30 days)
 
 | Pool | Per-side cap | Duration | Pool cap |
 | --- | ---: | ---: | ---: |
-| NVDA/USDG | 500,000,000 DEEP | 395 days | 1,000,000,000 DEEP |
-| DEEP/USDG | 250,000,000 DEEP | 60 days | 500,000,000 DEEP |
+| NVDA/USDG | 750,000,000 DEEP | 395 days | 1,500,000,000 DEEP |
 
 The amount required for the full side budget grows geometrically for 30 days:
 
@@ -75,15 +74,14 @@ Q(t) = Qstart * (Qmax / Qstart)^(min(t, 30 days) / 30 days)
 | --- | ---: | ---: | ---: |
 | USDG | 1 | 1,000,000 | `1e6` to `1_000_000e6` |
 | NVDA | 1 | 5,000 | `1e18` to `5_000e18` |
-| DEEP | 1 | 1,000,000 | `1e18` to `1_000_000e18` |
 
 Displayed quantity below `Q(t)` earns linearly; quantity at or above it earns
 100%. The contract integrates the moving target across the full reward interval
 rather than sampling only entry or exit. Per-side cumulative accounting also
 enforces the immutable cap independently of the token's role system.
 
-Rewarders mint DEEP directly to order owners at claim time and each holds a
-revocable `DeepstateToken.MINTER_ROLE`. Governance may revoke either role.
+The rewarder mints DEEP directly to order owners at claim time and holds a
+revocable `DeepstateToken.MINTER_ROLE`. Governance may revoke the role.
 Anyone can call `registerClaimant` for an active order to cache its engine-verified
 reward recipient before `cancel` permanently deletes engine ownership. Registration
 is permissionless, but the claimant always comes from Deepstate. `distributeRewards`
@@ -118,11 +116,11 @@ forge test
 
 ## Deployment
 
-`script/DeployDeepstate.s.sol` deploys the core stack and both rewarders,
-enables both pool hooks, grants the Governor `DeepstateToken`'s default admin
-role, and transfers ownership of the vault, both rewarders, and `DeepstateV1`
-to `DeepstateGovernor`. Both rewarders receive `MINTER_ROLE`; an optional
-additional minter may be configured for a separate emissions path.
+`script/DeployDeepstate.s.sol` deploys the core stack and the NVDA/USDG
+rewarder, enables that pool hook, grants the Governor `DeepstateToken`'s
+default admin role, and transfers ownership of the vault, rewarder, and
+`DeepstateV1` to `DeepstateGovernor`. The rewarder receives `MINTER_ROLE`; an
+optional additional minter may be configured for a separate emissions path.
 
 Required environment variables:
 

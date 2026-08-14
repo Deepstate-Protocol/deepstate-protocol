@@ -50,10 +50,8 @@ contract CountingHook is IHook {
 
 contract DeepstateRewarderTest is Test {
     uint32 internal constant MAX_ORDER_NONCE = type(uint32).max;
-    uint96 internal constant NVDA_SIDE_CAP = 500_000_000e18;
+    uint96 internal constant NVDA_SIDE_CAP = 750_000_000e18;
     uint32 internal constant NVDA_DURATION = 395 days;
-    uint96 internal constant DEEP_SIDE_CAP = 250_000_000e18;
-    uint32 internal constant DEEP_DURATION = 60 days;
     uint160 internal constant START_QUANTITY = 1e18;
     uint160 internal constant MAX_QUANTITY = 1_000_000e18;
     bytes32 internal constant INVALID_POOL_ID = keccak256("invalid-pool");
@@ -244,34 +242,15 @@ contract DeepstateRewarderTest is Test {
     }
 
     function test_LogEmissionScheduleMatchesSelectedNVDA_CHECKPOINTS() public view {
-        _assertApproxTokens(rewarder.cumulativeEmissionsAtElapsed(1 days), 6_184_677.733838e18);
-        _assertApproxTokens(rewarder.cumulativeEmissionsAtElapsed(7 days), 39_556_599.780835e18);
-        _assertApproxTokens(rewarder.cumulativeEmissionsAtElapsed(15 days), 76_477_114.24066e18);
-        _assertApproxTokens(rewarder.cumulativeEmissionsAtElapsed(30 days), 130_738_490.324383e18);
-        _assertApproxTokens(rewarder.cumulativeEmissionsAtElapsed(60 days), 207_215_604.565042e18);
-        _assertApproxTokens(rewarder.cumulativeEmissionsAtElapsed(180 days), 367_029_344.314536e18);
-        _assertApproxTokens(rewarder.cumulativeEmissionsAtElapsed(365 days), 486_192_683.463157e18);
+        _assertApproxTokens(rewarder.cumulativeEmissionsAtElapsed(1 days), 9_277_016.600757e18);
+        _assertApproxTokens(rewarder.cumulativeEmissionsAtElapsed(7 days), 59_334_899.671253e18);
+        _assertApproxTokens(rewarder.cumulativeEmissionsAtElapsed(15 days), 114_715_671.36099e18);
+        _assertApproxTokens(rewarder.cumulativeEmissionsAtElapsed(30 days), 196_107_735.486575e18);
+        _assertApproxTokens(rewarder.cumulativeEmissionsAtElapsed(60 days), 310_823_406.847563e18);
+        _assertApproxTokens(rewarder.cumulativeEmissionsAtElapsed(180 days), 550_544_016.471804e18);
+        _assertApproxTokens(rewarder.cumulativeEmissionsAtElapsed(365 days), 729_289_025.194736e18);
         assertEq(rewarder.cumulativeEmissionsAtElapsed(395 days), NVDA_SIDE_CAP);
         assertEq(rewarder.cumulativeEmissionsAtElapsed(type(uint256).max), NVDA_SIDE_CAP);
-    }
-
-    function test_LogEmissionScheduleMatchesSelectedDEEP_CHECKPOINTS() public {
-        DeepstateRewarder deepRewarder = _deployRewarder(
-            address(rewardToken),
-            DEEP_SIDE_CAP,
-            DEEP_DURATION,
-            START_QUANTITY,
-            MAX_QUANTITY,
-            START_QUANTITY,
-            MAX_QUANTITY
-        );
-
-        _assertApproxTokens(deepRewarder.cumulativeEmissionsAtElapsed(1 days), 7_461_645.741908e18);
-        _assertApproxTokens(deepRewarder.cumulativeEmissionsAtElapsed(7 days), 47_723_963.482222e18);
-        _assertApproxTokens(deepRewarder.cumulativeEmissionsAtElapsed(15 days), 92_267_561.607136e18);
-        _assertApproxTokens(deepRewarder.cumulativeEmissionsAtElapsed(30 days), 157_732_438.392864e18);
-        assertEq(deepRewarder.cumulativeEmissionsAtElapsed(60 days), DEEP_SIDE_CAP);
-        assertEq(deepRewarder.cumulativeEmissionsAtElapsed(365 days), DEEP_SIDE_CAP);
     }
 
     function testFuzz_EmissionAccountingIsMonotonicAndCapped(uint32 firstOffset, uint32 secondOffset) public view {
@@ -342,18 +321,18 @@ contract DeepstateRewarderTest is Test {
     }
 
     function test_IntegratedRewardsMatchIndependentNumericalVectors() public view {
-        _assertApproxTokens(rewarder.previewRewardAtElapsed(address(token0), 0, 1 days, 1e18), 4_962_407.843893e18);
-        _assertApproxTokens(rewarder.previewRewardAtElapsed(address(token0), 0, 5 days, 1e18), 11_677_688.307573e18);
-        _assertApproxTokens(rewarder.previewRewardAtElapsed(address(token0), 0, 30 days, 1e18), 12_782_943.635188e18);
-        _assertApproxTokens(rewarder.previewRewardAtElapsed(address(token0), 0, 30 days, 10e18), 40_127_802.701263e18);
+        _assertApproxTokens(rewarder.previewRewardAtElapsed(address(token0), 0, 1 days, 1e18), 7_443_611.76584e18);
+        _assertApproxTokens(rewarder.previewRewardAtElapsed(address(token0), 0, 5 days, 1e18), 17_516_532.46136e18);
+        _assertApproxTokens(rewarder.previewRewardAtElapsed(address(token0), 0, 30 days, 1e18), 19_174_415.452782e18);
+        _assertApproxTokens(rewarder.previewRewardAtElapsed(address(token0), 0, 30 days, 10e18), 60_191_704.051895e18);
         _assertApproxTokens(
-            rewarder.previewRewardAtElapsed(address(token0), 0, 30 days, 1_000e18), 85_170_174.746157e18
+            rewarder.previewRewardAtElapsed(address(token0), 0, 30 days, 1_000e18), 127_755_262.119236e18
         );
         _assertApproxTokens(
-            rewarder.previewRewardAtElapsed(address(token0), 5 days, 20 days, 100e18), 34_843_198.007817e18
+            rewarder.previewRewardAtElapsed(address(token0), 5 days, 20 days, 100e18), 52_264_797.011726e18
         );
         _assertApproxTokens(
-            rewarder.previewRewardAtElapsed(address(token0), 30 days, 60 days, 500_000e18), 38_238_557.12033e18
+            rewarder.previewRewardAtElapsed(address(token0), 30 days, 60 days, 500_000e18), 57_357_835.680495e18
         );
     }
 
