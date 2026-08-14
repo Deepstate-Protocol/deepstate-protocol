@@ -25,6 +25,33 @@ contract DeepstateVaultHarness is DeepstateVault {
     }
 }
 
+contract RejectingNativeReceiver {
+    receive() external payable {
+        revert();
+    }
+}
+
+contract ReenteringNativeReceiver {
+    DeepstateVault internal immutable vault;
+
+    bool public attempted;
+    bool public reentered;
+
+    constructor(DeepstateVault vault_) {
+        vault = vault_;
+    }
+
+    receive() external payable {
+        attempted = true;
+
+        address[] memory tokens = new address[](1);
+        tokens[0] = address(0);
+        try vault.redeemAssets(1, address(this), address(this), tokens) {
+            reentered = true;
+        } catch {}
+    }
+}
+
 contract DeepstateVaultTest is Test {
     bytes32 internal constant DELEGATION_TYPEHASH =
         keccak256("Delegation(address delegatee,uint256 nonce,uint256 expiry)");
@@ -121,6 +148,7 @@ contract DeepstateVaultTest is Test {
         assertEq(vault.valueToken(), address(valueToken));
         assertEq(vault.wrappedNative(), address(wrappedNative));
         assertEq(vault.owner(), owner);
+        assertEq(vault.CLOCK_MODE(), "mode=timestamp");
 
         vm.expectRevert(DeepstateVault.ZeroAddress.selector);
         new DeepstateVault(
@@ -467,6 +495,228 @@ contract DeepstateVaultTest is Test {
         assertEq(vault.balanceOf(alice), 60e18);
     }
 
+    function testRedeemAssetsPaysProRataERC20AndNativeBalances() public {
+        vm.prank(alice);
+        vault.deposit(100e18, alice);
+        vm.prank(bob);
+        vault.deposit(100e18, bob);
+
+        valueToken.mint(address(vault), 1_000e6);
+        feeToken.mint(address(vault), 10e18);
+        vm.deal(address(vault), 2 ether);
+
+        address[] memory tokens = new address[](3);
+        tokens[0] = address(valueToken);
+        tokens[1] = address(feeToken);
+        tokens[2] = address(0);
+
+        uint256 aliceNativeBefore = alice.balance;
+        vm.prank(alice);
+        uint256[] memory assets = vault.redeemAssets(50e18, alice, alice, tokens);
+
+        assertEq(assets.length, 3);
+        assertEq(assets[0], 250e6);
+        assertEq(assets[1], 2.5e18);
+        assertEq(assets[2], 0.5 ether);
+        assertEq(valueToken.balanceOf(alice), 250e6);
+        assertEq(feeToken.balanceOf(alice), 2.5e18);
+        assertEq(alice.balance, aliceNativeBefore + 0.5 ether);
+        assertEq(valueToken.balanceOf(address(vault)), 750e6);
+        assertEq(feeToken.balanceOf(address(vault)), 7.5e18);
+        assertEq(address(vault).balance, 1.5 ether);
+        assertEq(vault.balanceOf(alice), 50e18);
+        assertEq(vault.totalSupply(), 150e18);
+        assertEq(vault.getVotes(alice), 50e18);
+    }
+
+    function testRedeemAssetsLeavesUnlistedAndZeroBalanceAssetsUntouched() public {
+        vm.prank(alice);
+        vault.deposit(100e18, alice);
+        vm.prank(bob);
+        vault.deposit(100e18, bob);
+        valueToken.mint(address(vault), 1_000e6);
+        vm.deal(address(vault), 2 ether);
+
+        address[] memory tokens = new address[](2);
+        tokens[0] = address(valueToken);
+        tokens[1] = address(feeToken);
+
+        vm.prank(alice);
+        uint256[] memory assets = vault.redeemAssets(50e18, alice, alice, tokens);
+
+        assertEq(assets[0], 250e6);
+        assertEq(assets[1], 0);
+        assertEq(valueToken.balanceOf(address(vault)), 750e6);
+        assertEq(address(vault).balance, 2 ether);
+    }
+
+    function testAllowanceCanRedeemMultipleAssetsForOwner() public {
+        vm.prank(alice);
+        vault.deposit(100e18, alice);
+        valueToken.mint(address(vault), 500e6);
+        feeToken.mint(address(vault), 25e18);
+
+        vm.prank(alice);
+        vault.approve(bob, 40e18);
+
+        address[] memory tokens = new address[](2);
+        tokens[0] = address(valueToken);
+        tokens[1] = address(feeToken);
+
+        vm.prank(bob);
+        uint256[] memory assets = vault.redeemAssets(40e18, carol, alice, tokens);
+
+        assertEq(assets[0], 200e6);
+        assertEq(assets[1], 10e18);
+        assertEq(vault.allowance(alice, bob), 0);
+        assertEq(vault.balanceOf(alice), 60e18);
+        assertEq(vault.getVotes(alice), 60e18);
+        assertEq(valueToken.balanceOf(carol), 200e6);
+        assertEq(feeToken.balanceOf(carol), 10e18);
+    }
+
+    function testRedeemAssetsRejectsDuplicateERC20AndNativeEntries() public {
+        vm.prank(alice);
+        vault.deposit(100e18, alice);
+        valueToken.mint(address(vault), 500e6);
+        feeToken.mint(address(vault), 25e18);
+        vm.deal(address(vault), 1 ether);
+
+        address[] memory tokens = new address[](3);
+        tokens[0] = address(valueToken);
+        tokens[1] = address(feeToken);
+        tokens[2] = address(valueToken);
+
+        vm.prank(alice);
+        vm.expectRevert(DeepstateVault.DuplicateAsset.selector);
+        vault.redeemAssets(40e18, alice, alice, tokens);
+
+        tokens = new address[](2);
+        tokens[0] = address(0);
+        tokens[1] = address(0);
+
+        vm.prank(alice);
+        vm.expectRevert(DeepstateVault.DuplicateAsset.selector);
+        vault.redeemAssets(40e18, alice, alice, tokens);
+
+        assertEq(vault.balanceOf(alice), 100e18);
+        assertEq(vault.totalSupply(), 100e18);
+        assertEq(valueToken.balanceOf(address(vault)), 500e6);
+        assertEq(address(vault).balance, 1 ether);
+    }
+
+    function testRedeemAssetsTransientDuplicateStateIsScopedPerCall() public {
+        vm.prank(alice);
+        vault.deposit(100e18, alice);
+        vm.prank(bob);
+        vault.deposit(100e18, bob);
+        valueToken.mint(address(vault), 1_000e6);
+
+        address[] memory tokens = new address[](1);
+        tokens[0] = address(valueToken);
+
+        vm.startPrank(alice);
+        uint256[] memory first = vault.redeemAssets(25e18, alice, alice, tokens);
+        uint256[] memory second = vault.redeemAssets(25e18, alice, alice, tokens);
+        vm.stopPrank();
+
+        assertEq(first[0], 125e6);
+        assertEq(second[0], 125e6);
+        assertEq(valueToken.balanceOf(alice), 250e6);
+        assertEq(vault.balanceOf(alice), 50e18);
+        assertEq(vault.totalSupply(), 150e18);
+    }
+
+    function testRedeemAssetsRejectsInvalidAndProtectedLists() public {
+        vm.prank(alice);
+        vault.deposit(100e18, alice);
+
+        address[] memory tokens = new address[](1);
+        tokens[0] = address(valueToken);
+
+        vm.prank(alice);
+        vm.expectRevert(DeepstateVault.ZeroShares.selector);
+        vault.redeemAssets(0, alice, alice, tokens);
+
+        vm.prank(alice);
+        vm.expectRevert(DeepstateVault.ZeroAddress.selector);
+        vault.redeemAssets(1e18, address(0), alice, tokens);
+
+        vm.prank(alice);
+        vm.expectRevert();
+        vault.redeemAssets(101e18, alice, alice, tokens);
+
+        tokens = new address[](0);
+        vm.prank(alice);
+        vm.expectRevert(DeepstateVault.EmptyAssetList.selector);
+        vault.redeemAssets(1e18, alice, alice, tokens);
+
+        tokens = new address[](1);
+        tokens[0] = address(feeToken);
+        vm.prank(alice);
+        vm.expectRevert(DeepstateVault.InsufficientRedeemableAssets.selector);
+        vault.redeemAssets(1e18, alice, alice, tokens);
+
+        tokens[0] = address(depositToken);
+        vm.prank(alice);
+        vm.expectRevert(DeepstateVault.ProtectedToken.selector);
+        vault.redeemAssets(1e18, alice, alice, tokens);
+
+        tokens[0] = address(vault);
+        vm.prank(alice);
+        vm.expectRevert(DeepstateVault.ProtectedToken.selector);
+        vault.redeemAssets(1e18, alice, alice, tokens);
+
+        assertEq(vault.balanceOf(alice), 100e18);
+        assertEq(vault.totalSupply(), 100e18);
+    }
+
+    function testRedeemAssetsFailedNativeTransferRollsBackBurnAndPayouts() public {
+        vm.prank(alice);
+        vault.deposit(100e18, alice);
+        valueToken.mint(address(vault), 500e6);
+        vm.deal(address(vault), 1 ether);
+
+        address[] memory tokens = new address[](2);
+        tokens[0] = address(valueToken);
+        tokens[1] = address(0);
+        RejectingNativeReceiver receiver = new RejectingNativeReceiver();
+
+        vm.prank(alice);
+        vm.expectRevert();
+        vault.redeemAssets(40e18, address(receiver), alice, tokens);
+
+        assertEq(vault.balanceOf(alice), 100e18);
+        assertEq(vault.totalSupply(), 100e18);
+        assertEq(valueToken.balanceOf(address(vault)), 500e6);
+        assertEq(valueToken.balanceOf(address(receiver)), 0);
+        assertEq(address(vault).balance, 1 ether);
+    }
+
+    function testRedeemAssetsBlocksNativeReceiverReentrancy() public {
+        vm.prank(alice);
+        vault.deposit(100e18, alice);
+        vm.deal(address(vault), 1 ether);
+
+        ReenteringNativeReceiver receiver = new ReenteringNativeReceiver(vault);
+        vm.prank(alice);
+        assertTrue(vault.transfer(address(receiver), 20e18));
+
+        address[] memory tokens = new address[](1);
+        tokens[0] = address(0);
+
+        vm.prank(address(receiver));
+        uint256[] memory assets = vault.redeemAssets(10e18, address(receiver), address(receiver), tokens);
+
+        assertEq(assets[0], 0.1 ether);
+        assertTrue(receiver.attempted());
+        assertFalse(receiver.reentered());
+        assertEq(address(receiver).balance, 0.1 ether);
+        assertEq(vault.balanceOf(address(receiver)), 10e18);
+        assertEq(vault.totalSupply(), 90e18);
+        assertEq(address(vault).balance, 0.9 ether);
+    }
+
     function testSweepAndAuctionFeeAssetsForValueToken() public {
         feeToken.mint(address(vault), 10e18);
         vm.deal(address(vault), 2 ether);
@@ -527,6 +777,12 @@ contract DeepstateVaultTest is Test {
         vault.sweepToAuction(tokens);
 
         tokens[0] = address(depositToken);
+
+        vm.prank(owner);
+        vm.expectRevert(DeepstateVault.ProtectedToken.selector);
+        vault.sweepToAuction(tokens);
+
+        tokens[0] = address(vault);
 
         vm.prank(owner);
         vm.expectRevert(DeepstateVault.ProtectedToken.selector);
@@ -615,6 +871,58 @@ contract DeepstateVaultTest is Test {
         assertEq(vault.getVotes(alice), aliceShares - aliceRedeemShares);
         assertEq(vault.getVotes(bob), bobShares);
         assertEq(depositToken.balanceOf(address(vault)), 0);
+    }
+
+    function testFuzzRedeemAssetsAccounting(
+        uint96 aliceAssets,
+        uint96 bobAssets,
+        uint96 redeemShares,
+        uint96 valueAssets,
+        uint96 feeAssets,
+        uint96 nativeAssets
+    ) public {
+        uint256 aliceDeposit = bound(uint256(aliceAssets), 2e18, 100e18);
+        uint256 bobDeposit = bound(uint256(bobAssets), 1e18, 100e18);
+        uint256 sharesToRedeem = bound(uint256(redeemShares), 1e18, aliceDeposit);
+        uint256 valueDeposit = bound(uint256(valueAssets), 1e6, 1_000_000e6);
+        uint256 feeDeposit = bound(uint256(feeAssets), 1e18, 1_000_000e18);
+        uint256 nativeDeposit = bound(uint256(nativeAssets), 1 ether, 1_000_000 ether);
+
+        vm.prank(alice);
+        vault.deposit(aliceDeposit, alice);
+        vm.prank(bob);
+        vault.deposit(bobDeposit, bob);
+
+        valueToken.mint(address(vault), valueDeposit);
+        feeToken.mint(address(vault), feeDeposit);
+        vm.deal(address(vault), nativeDeposit);
+
+        uint256 supply = aliceDeposit + bobDeposit;
+        uint256 expectedValue = sharesToRedeem * valueDeposit / supply;
+        uint256 expectedFee = sharesToRedeem * feeDeposit / supply;
+        uint256 expectedNative = sharesToRedeem * nativeDeposit / supply;
+        address[] memory tokens = new address[](3);
+        tokens[0] = address(valueToken);
+        tokens[1] = address(feeToken);
+        tokens[2] = address(0);
+
+        vm.prank(alice);
+        uint256[] memory assets = vault.redeemAssets(sharesToRedeem, alice, alice, tokens);
+
+        assertEq(assets[0], expectedValue);
+        assertEq(assets[1], expectedFee);
+        assertEq(assets[2], expectedNative);
+        assertEq(valueToken.balanceOf(alice), expectedValue);
+        assertEq(feeToken.balanceOf(alice), expectedFee);
+        assertEq(alice.balance, expectedNative);
+        assertEq(valueToken.balanceOf(address(vault)), valueDeposit - expectedValue);
+        assertEq(feeToken.balanceOf(address(vault)), feeDeposit - expectedFee);
+        assertEq(address(vault).balance, nativeDeposit - expectedNative);
+        assertEq(vault.balanceOf(alice), aliceDeposit - sharesToRedeem);
+        assertEq(vault.totalSupply(), supply - sharesToRedeem);
+        assertEq(vault.getVotes(alice), aliceDeposit - sharesToRedeem);
+        assertEq(vault.getVotes(bob), bobDeposit);
+        assertEq(vault.totalAssets(), supply);
     }
 
     function _domainSeparator() internal view returns (bytes32) {

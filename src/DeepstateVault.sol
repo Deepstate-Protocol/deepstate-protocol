@@ -7,9 +7,12 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {ERC20Votes} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Votes.sol";
 import {ERC4626} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {SlotDerivation} from "@openzeppelin/contracts/utils/SlotDerivation.sol";
+import {TransientSlot} from "@openzeppelin/contracts/utils/TransientSlot.sol";
 
 import {IBurnableERC20} from "./interfaces/IBurnableERC20.sol";
 import {IWrappedNative} from "./interfaces/IWrappedNative.sol";
@@ -20,6 +23,11 @@ import {IWrappedNative} from "./interfaces/IWrappedNative.sol";
 contract DeepstateVault is ERC4626, ERC20Votes, Ownable, ReentrancyGuard {
     using Math for uint256;
     using SafeERC20 for IERC20;
+    using SlotDerivation for bytes32;
+    using TransientSlot for *;
+
+    bytes32 private constant _REDEEM_CALL_MARKER_SLOT = keccak256("DeepstateVault.redeemAssets.callMarker");
+    bytes32 private constant _REDEEM_ASSET_SEEN_SEED = keccak256("DeepstateVault.redeemAssets.assetSeen");
 
     address public immutable depositToken;
     address public immutable valueToken;
@@ -32,6 +40,8 @@ contract DeepstateVault is ERC4626, ERC20Votes, Ownable, ReentrancyGuard {
     event ValueRedeemed(
         address indexed by, address indexed receiver, address indexed owner, uint256 shares, uint256 valueAssets
     );
+    event AssetsRedeemed(address indexed by, address indexed receiver, address indexed owner, uint256 shares);
+    event AssetRedeemed(address indexed receiver, address indexed asset, uint256 amount);
     event AuctionSet(address indexed auction);
     event SweptToAuction(address indexed token, uint256 amount);
     event NativeSweptToAuction(uint256 amount);
@@ -44,6 +54,9 @@ contract DeepstateVault is ERC4626, ERC20Votes, Ownable, ReentrancyGuard {
     error InsufficientValueAssets();
     error UseRedeemValue();
     error WrappedNativeNotSet();
+    error EmptyAssetList();
+    error DuplicateAsset();
+    error InsufficientRedeemableAssets();
 
     constructor(
         address owner_,
@@ -115,6 +128,57 @@ contract DeepstateVault is ERC4626, ERC20Votes, Ownable, ReentrancyGuard {
         emit ValueRedeemed(msg.sender, receiver, owner, shares, valueAssets);
     }
 
+    /// @notice Burns STATE and pays a pro-rata share of each explicitly listed vault asset.
+    /// @dev Use address(0) for native ETH. DEEP and STATE cannot be redeemed through this path.
+    /// All payouts use pre-burn balances and supply; omitted assets remain in the vault.
+    function redeemAssets(uint256 shares, address receiver, address owner, address[] calldata tokens)
+        external
+        nonReentrant
+        returns (uint256[] memory assets)
+    {
+        if (shares == 0) revert ZeroShares();
+        if (receiver == address(0)) revert ZeroAddress();
+
+        uint256 ownerBalance = balanceOf(owner);
+        if (shares > ownerBalance) revert ERC4626ExceededMaxRedeem(owner, shares, ownerBalance);
+
+        uint256 length = tokens.length;
+        if (length == 0) revert EmptyAssetList();
+
+        uint256 supply = totalSupply();
+        uint256 marker = _nextRedeemCallMarker();
+        assets = new uint256[](length);
+        bool hasAssets;
+
+        for (uint256 i; i < length; ++i) {
+            address token = tokens[i];
+            if (token == depositToken || token == address(this)) revert ProtectedToken();
+            _markAssetSeen(token, marker);
+
+            uint256 amount = shares.mulDiv(_vaultBalance(token), supply);
+            assets[i] = amount;
+            if (amount != 0) hasAssets = true;
+        }
+
+        if (!hasAssets) revert InsufficientRedeemableAssets();
+        if (msg.sender != owner) _spendAllowance(owner, msg.sender, shares);
+
+        _burn(owner, shares);
+
+        for (uint256 i; i < length; ++i) {
+            uint256 amount = assets[i];
+            if (amount == 0) continue;
+
+            address token = tokens[i];
+            if (token == address(0)) Address.sendValue(payable(receiver), amount);
+            else IERC20(token).safeTransfer(receiver, amount);
+
+            emit AssetRedeemed(receiver, token, amount);
+        }
+
+        emit AssetsRedeemed(msg.sender, receiver, owner, shares);
+    }
+
     /// @dev Strict ERC-4626 withdrawal would return the deposit asset, which is burned here.
     function withdraw(uint256, address, address) public pure override returns (uint256) {
         revert UseRedeemValue();
@@ -153,7 +217,7 @@ contract DeepstateVault is ERC4626, ERC20Votes, Ownable, ReentrancyGuard {
 
         for (uint256 i; i < tokens.length; ++i) {
             address token = tokens[i];
-            if (token == depositToken || token == valueToken) revert ProtectedToken();
+            if (token == depositToken || token == valueToken || token == address(this)) revert ProtectedToken();
 
             uint256 balance = IERC20(token).balanceOf(address(this));
             if (balance == 0) continue;
@@ -204,6 +268,22 @@ contract DeepstateVault is ERC4626, ERC20Votes, Ownable, ReentrancyGuard {
 
     function _selfDelegateIfUnset(address account) private {
         if (delegates(account) == address(0)) _delegate(account, account);
+    }
+
+    function _vaultBalance(address token) private view returns (uint256) {
+        return token == address(0) ? address(this).balance : IERC20(token).balanceOf(address(this));
+    }
+
+    function _nextRedeemCallMarker() private returns (uint256 marker) {
+        TransientSlot.Uint256Slot slot = _REDEEM_CALL_MARKER_SLOT.asUint256();
+        marker = slot.tload() + 1;
+        slot.tstore(marker);
+    }
+
+    function _markAssetSeen(address token, uint256 marker) private {
+        TransientSlot.Uint256Slot slot = _REDEEM_ASSET_SEEN_SEED.deriveMapping(token).asUint256();
+        if (slot.tload() == marker) revert DuplicateAsset();
+        slot.tstore(marker);
     }
 
     function _update(address from, address to, uint256 value) internal override(ERC20, ERC20Votes) {

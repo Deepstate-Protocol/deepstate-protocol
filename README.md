@@ -11,6 +11,9 @@ a single value token.
   recorded as `totalBurnedDepositAssets`.
 - `redeemValue`: burns shares for the holder's pro-rata amount of the value
   token, such as USDC.
+- `redeemAssets`: burns shares for the holder's pro-rata amount of each
+  explicitly listed ERC-20 balance and raw ETH balance. Raw ETH is represented
+  by `address(0)`; DEEP, STATE, and duplicate entries are rejected.
 - `FeeFlowController`: imported from Euler Labs' Fee Flow git dependency.
   Buyers pay the value token to the vault and receive the controller's full
   balances of selected ERC-20 fee assets.
@@ -21,9 +24,11 @@ ERC-4626 assumes one underlying asset for both deposit and withdrawal. This
 vault intentionally has two assets: the burnable deposit/accounting token and
 the value accrual token. The standard `deposit`, `mint`, preview, and conversion
 math are preserved for the deposit token. Value redemption is explicit through
-`redeemValue` / `previewRedeemValue` so integrators do not mistake USDC
-redemption for returning the burned deposit token. `maxWithdraw` and
-`maxRedeem` therefore return zero; `maxRedeemValue` reports the separate value
+`redeemValue` / `previewRedeemValue`, while `redeemAssets` supports a
+caller-supplied list of ERC-20 fee assets and raw ETH. Assets omitted from that
+list stay in the vault even though the shares are burned. Integrators should
+therefore enumerate every balance the holder intends to claim. `maxWithdraw`
+and `maxRedeem` return zero; `maxRedeemValue` reports the separate value-token
 redemption capacity.
 
 ## Governance Clock
