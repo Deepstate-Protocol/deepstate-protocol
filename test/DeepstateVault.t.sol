@@ -15,10 +15,11 @@ contract DeepstateVaultHarness is DeepstateVault {
         address owner_,
         address depositToken_,
         address valueToken_,
+        address secondaryValueToken_,
         address wrappedNative_,
         string memory name_,
         string memory symbol_
-    ) DeepstateVault(owner_, depositToken_, valueToken_, wrappedNative_, name_, symbol_) {}
+    ) DeepstateVault(owner_, depositToken_, valueToken_, secondaryValueToken_, wrappedNative_, name_, symbol_) {}
 
     function exposedDeposit(address caller, address receiver, uint256 assets, uint256 shares) external {
         _deposit(caller, receiver, assets, shares);
@@ -43,6 +44,7 @@ contract DeepstateVaultTest is Test {
 
     MockERC20 internal depositToken;
     MockERC20 internal valueToken;
+    MockERC20 internal secondaryValueToken;
     MockERC20 internal feeToken;
     MockWETH internal wrappedNative;
     DeepstateVault internal vault;
@@ -52,11 +54,18 @@ contract DeepstateVaultTest is Test {
     function setUp() public {
         depositToken = new MockERC20("Deposit", "DEP", 18);
         valueToken = new MockERC20("USD Coin", "USDC", 6);
+        secondaryValueToken = new MockERC20("NVIDIA", "NVDA", 18);
         feeToken = new MockERC20("Fee Token", "FEE", 18);
         wrappedNative = new MockWETH();
 
         vault = new DeepstateVault(
-            owner, address(depositToken), address(valueToken), address(wrappedNative), "Deepstate Governance", "STATE"
+            owner,
+            address(depositToken),
+            address(valueToken),
+            address(secondaryValueToken),
+            address(wrappedNative),
+            "Deepstate Governance",
+            "STATE"
         );
 
         evc = new EthereumVaultConnector();
@@ -119,23 +128,50 @@ contract DeepstateVaultTest is Test {
         assertEq(vault.asset(), address(depositToken));
         assertEq(vault.depositToken(), address(depositToken));
         assertEq(vault.valueToken(), address(valueToken));
+        assertEq(vault.secondaryValueToken(), address(secondaryValueToken));
         assertEq(vault.wrappedNative(), address(wrappedNative));
         assertEq(vault.owner(), owner);
 
         vm.expectRevert(DeepstateVault.ZeroAddress.selector);
         new DeepstateVault(
-            owner, address(0), address(valueToken), address(wrappedNative), "Deepstate Governance", "STATE"
+            owner,
+            address(0),
+            address(valueToken),
+            address(secondaryValueToken),
+            address(wrappedNative),
+            "Deepstate Governance",
+            "STATE"
         );
 
         vm.expectRevert(DeepstateVault.ZeroAddress.selector);
         new DeepstateVault(
-            owner, address(depositToken), address(0), address(wrappedNative), "Deepstate Governance", "STATE"
+            owner,
+            address(depositToken),
+            address(0),
+            address(secondaryValueToken),
+            address(wrappedNative),
+            "Deepstate Governance",
+            "STATE"
+        );
+
+        vm.expectRevert(DeepstateVault.ZeroAddress.selector);
+        new DeepstateVault(
+            owner,
+            address(depositToken),
+            address(valueToken),
+            address(0),
+            address(wrappedNative),
+            "Deepstate Governance",
+            "STATE"
         );
     }
 
     function testPreviewRedeemValueReturnsZeroBeforeSupplyExists() public view {
         assertEq(vault.convertToValueAssets(1e18), 0);
-        assertEq(vault.previewRedeemValue(1e18), 0);
+        assertEq(vault.convertToSecondaryValueAssets(1e18), 0);
+        (uint256 valueAssets, uint256 secondaryValueAssets) = vault.previewRedeemValue(1e18);
+        assertEq(valueAssets, 0);
+        assertEq(secondaryValueAssets, 0);
     }
 
     function testDepositAndMintRejectZeroAmounts() public {
@@ -152,7 +188,13 @@ contract DeepstateVaultTest is Test {
 
     function testInternalDepositRejectsZeroShares() public {
         DeepstateVaultHarness harness = new DeepstateVaultHarness(
-            owner, address(depositToken), address(valueToken), address(wrappedNative), "Deepstate Governance", "STATE"
+            owner,
+            address(depositToken),
+            address(valueToken),
+            address(secondaryValueToken),
+            address(wrappedNative),
+            "Deepstate Governance",
+            "STATE"
         );
 
         vm.expectRevert(DeepstateVault.ZeroShares.selector);
@@ -313,6 +355,7 @@ contract DeepstateVaultTest is Test {
         vm.prank(alice);
         vault.deposit(100e18, alice);
         valueToken.mint(address(vault), 1_000e6);
+        secondaryValueToken.mint(address(vault), 100e18);
 
         vm.prank(alice);
         vault.approve(carol, 40e18);
@@ -325,6 +368,7 @@ contract DeepstateVaultTest is Test {
         assertEq(vault.getVotes(alice), 0);
         assertEq(vault.getVotes(bob), 60e18);
         assertEq(valueToken.balanceOf(carol), 400e6);
+        assertEq(secondaryValueToken.balanceOf(carol), 40e18);
     }
 
     function testDelegateBySigMovesVotesAndConsumesNonce() public {
@@ -409,23 +453,27 @@ contract DeepstateVaultTest is Test {
         assertEq(vault.maxRedeemValue(alice), 100e18);
     }
 
-    function testRedeemsProRataValueToken() public {
+    function testRedeemsProRataValueTokens() public {
         vm.prank(alice);
         vault.deposit(100e18, alice);
         vm.prank(bob);
         vault.deposit(100e18, bob);
 
         valueToken.mint(address(vault), 1_000e6);
+        secondaryValueToken.mint(address(vault), 100e18);
 
         vm.prank(alice);
-        uint256 redeemed = vault.redeemValue(50e18, alice, alice);
+        (uint256 redeemed, uint256 secondaryRedeemed) = vault.redeemValue(50e18, alice, alice);
 
         assertEq(redeemed, 250e6);
+        assertEq(secondaryRedeemed, 25e18);
         assertEq(valueToken.balanceOf(alice), 250e6);
+        assertEq(secondaryValueToken.balanceOf(alice), 25e18);
         assertEq(vault.balanceOf(alice), 50e18);
         assertEq(vault.totalSupply(), 150e18);
 
         assertEq(vault.convertToValueAssets(50e18), 250e6);
+        assertEq(vault.convertToSecondaryValueAssets(50e18), 25e18);
     }
 
     function testValueRedeemRevertsWhenNoValueAssetsOrZeroShares() public {
@@ -455,15 +503,18 @@ contract DeepstateVaultTest is Test {
         vm.prank(alice);
         vault.deposit(100e18, alice);
         valueToken.mint(address(vault), 500e6);
+        secondaryValueToken.mint(address(vault), 50e18);
 
         vm.prank(alice);
         vault.approve(bob, 40e18);
 
         vm.prank(bob);
-        uint256 redeemed = vault.redeemValue(40e18, bob, alice);
+        (uint256 redeemed, uint256 secondaryRedeemed) = vault.redeemValue(40e18, bob, alice);
 
         assertEq(redeemed, 200e6);
+        assertEq(secondaryRedeemed, 20e18);
         assertEq(valueToken.balanceOf(bob), 200e6);
+        assertEq(secondaryValueToken.balanceOf(bob), 20e18);
         assertEq(vault.balanceOf(alice), 60e18);
     }
 
@@ -531,6 +582,12 @@ contract DeepstateVaultTest is Test {
         vm.prank(owner);
         vm.expectRevert(DeepstateVault.ProtectedToken.selector);
         vault.sweepToAuction(tokens);
+
+        tokens[0] = address(secondaryValueToken);
+
+        vm.prank(owner);
+        vm.expectRevert(DeepstateVault.ProtectedToken.selector);
+        vault.sweepToAuction(tokens);
     }
 
     function testSetAuctionRejectsZeroAddress() public {
@@ -541,7 +598,13 @@ contract DeepstateVaultTest is Test {
 
     function testSweepRequiresAuctionAndSkipsZeroBalances() public {
         DeepstateVault noAuctionVault = new DeepstateVault(
-            owner, address(depositToken), address(valueToken), address(wrappedNative), "Deepstate Governance", "STATE"
+            owner,
+            address(depositToken),
+            address(valueToken),
+            address(secondaryValueToken),
+            address(wrappedNative),
+            "Deepstate Governance",
+            "STATE"
         );
 
         address[] memory tokens = new address[](1);
@@ -559,7 +622,13 @@ contract DeepstateVaultTest is Test {
 
     function testSweepNativeRequiresAuctionAndWrappedNativeWhenBalanceExists() public {
         DeepstateVault noAuctionVault = new DeepstateVault(
-            owner, address(depositToken), address(valueToken), address(wrappedNative), "Deepstate Governance", "STATE"
+            owner,
+            address(depositToken),
+            address(valueToken),
+            address(secondaryValueToken),
+            address(wrappedNative),
+            "Deepstate Governance",
+            "STATE"
         );
 
         vm.prank(owner);
@@ -572,7 +641,13 @@ contract DeepstateVaultTest is Test {
         assertEq(wrappedNative.balanceOf(address(auction)), 0);
 
         DeepstateVault noWrappedNativeVault = new DeepstateVault(
-            owner, address(depositToken), address(valueToken), address(0), "Deepstate Governance", "STATE"
+            owner,
+            address(depositToken),
+            address(valueToken),
+            address(secondaryValueToken),
+            address(0),
+            "Deepstate Governance",
+            "STATE"
         );
 
         vm.prank(owner);
@@ -593,6 +668,7 @@ contract DeepstateVaultTest is Test {
         uint256 aliceDeposit = bound(uint256(aliceAssets), 2, 100e18);
         uint256 bobDeposit = bound(uint256(bobAssets), 1, 100e18);
         uint256 valueDeposit = bound(uint256(valueAssets), 1e6, 1_000_000e6);
+        uint256 secondaryValueDeposit = valueDeposit * 1e12;
 
         vm.prank(alice);
         uint256 aliceShares = vault.deposit(aliceDeposit, alice);
@@ -600,16 +676,20 @@ contract DeepstateVaultTest is Test {
         uint256 bobShares = vault.deposit(bobDeposit, bob);
 
         valueToken.mint(address(vault), valueDeposit);
+        secondaryValueToken.mint(address(vault), secondaryValueDeposit);
 
         uint256 aliceRedeemShares = aliceShares / 2;
         uint256 expectedValue = aliceRedeemShares * valueDeposit / (aliceShares + bobShares);
+        uint256 expectedSecondaryValue = aliceRedeemShares * secondaryValueDeposit / (aliceShares + bobShares);
         vm.assume(expectedValue != 0);
 
         vm.prank(alice);
-        uint256 redeemed = vault.redeemValue(aliceRedeemShares, alice, alice);
+        (uint256 redeemed, uint256 secondaryRedeemed) = vault.redeemValue(aliceRedeemShares, alice, alice);
 
         assertEq(redeemed, expectedValue);
+        assertEq(secondaryRedeemed, expectedSecondaryValue);
         assertEq(valueToken.balanceOf(alice), expectedValue);
+        assertEq(secondaryValueToken.balanceOf(alice), expectedSecondaryValue);
         assertEq(vault.totalAssets(), aliceDeposit + bobDeposit);
         assertEq(vault.totalSupply(), aliceShares + bobShares - aliceRedeemShares);
         assertEq(vault.getVotes(alice), aliceShares - aliceRedeemShares);

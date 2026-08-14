@@ -58,6 +58,7 @@ contract DeepstateGovernanceTest is Test {
 
     DeepstateToken internal deepstate;
     MockERC20 internal valueToken;
+    MockERC20 internal secondaryValueToken;
     MockWETH internal wrappedNative;
     DeepstateVault internal vault;
     DeepstateGovernor internal governor;
@@ -68,9 +69,16 @@ contract DeepstateGovernanceTest is Test {
 
         deepstate = new DeepstateToken(deployer, "Deepstate", "DEEP");
         valueToken = new MockERC20("USD Coin", "USDC", 6);
+        secondaryValueToken = new MockERC20("NVIDIA", "NVDA", 18);
         wrappedNative = new MockWETH();
         vault = new DeepstateVault(
-            deployer, address(deepstate), address(valueToken), address(wrappedNative), "Deepstate Governance", "STATE"
+            deployer,
+            address(deepstate),
+            address(valueToken),
+            address(secondaryValueToken),
+            address(wrappedNative),
+            "Deepstate Governance",
+            "STATE"
         );
         governanceDeployedAt = uint48(block.timestamp);
         governor = new DeepstateGovernor(

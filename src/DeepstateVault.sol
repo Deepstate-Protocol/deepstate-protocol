@@ -16,13 +16,14 @@ import {IWrappedNative} from "./interfaces/IWrappedNative.sol";
 
 /// @notice STATE governance share vault with ERC-4626 deposit math over burned DEEP.
 /// @dev ERC-4626 has one underlying asset. This vault deliberately separates the
-/// deposit/accounting asset from the value token redeemed by share holders.
+/// deposit/accounting asset from the two value tokens redeemed by share holders.
 contract DeepstateVault is ERC4626, ERC20Votes, Ownable, ReentrancyGuard {
     using Math for uint256;
     using SafeERC20 for IERC20;
 
     address public immutable depositToken;
     address public immutable valueToken;
+    address public immutable secondaryValueToken;
     address public immutable wrappedNative;
 
     uint256 public totalBurnedDepositAssets;
@@ -30,7 +31,12 @@ contract DeepstateVault is ERC4626, ERC20Votes, Ownable, ReentrancyGuard {
 
     event DepositAssetBurned(address indexed by, uint256 amount);
     event ValueRedeemed(
-        address indexed by, address indexed receiver, address indexed owner, uint256 shares, uint256 valueAssets
+        address indexed by,
+        address indexed receiver,
+        address indexed owner,
+        uint256 shares,
+        uint256 valueAssets,
+        uint256 secondaryValueAssets
     );
     event AuctionSet(address indexed auction);
     event SweptToAuction(address indexed token, uint256 amount);
@@ -49,16 +55,18 @@ contract DeepstateVault is ERC4626, ERC20Votes, Ownable, ReentrancyGuard {
         address owner_,
         address depositToken_,
         address valueToken_,
+        address secondaryValueToken_,
         address wrappedNative_,
         string memory name_,
         string memory symbol_
     ) ERC20(name_, symbol_) ERC4626(IERC20(depositToken_)) EIP712(name_, "1") Ownable(owner_) {
-        if (depositToken_ == address(0) || valueToken_ == address(0)) {
+        if (depositToken_ == address(0) || valueToken_ == address(0) || secondaryValueToken_ == address(0)) {
             revert ZeroAddress();
         }
 
         depositToken = depositToken_;
         valueToken = valueToken_;
+        secondaryValueToken = secondaryValueToken_;
         wrappedNative = wrappedNative_;
     }
 
@@ -91,28 +99,42 @@ contract DeepstateVault is ERC4626, ERC20Votes, Ownable, ReentrancyGuard {
         return shares.mulDiv(IERC20(valueToken).balanceOf(address(this)), supply);
     }
 
-    function previewRedeemValue(uint256 shares) external view returns (uint256) {
-        return convertToValueAssets(shares);
+    /// @notice Returns the secondary value token amount currently redeemable for `shares`.
+    function convertToSecondaryValueAssets(uint256 shares) public view returns (uint256) {
+        uint256 supply = totalSupply();
+        if (supply == 0) return 0;
+        return shares.mulDiv(IERC20(secondaryValueToken).balanceOf(address(this)), supply);
     }
 
-    /// @notice Burns shares and pays the owner a pro-rata amount of the value token.
+    function previewRedeemValue(uint256 shares)
+        external
+        view
+        returns (uint256 valueAssets, uint256 secondaryValueAssets)
+    {
+        valueAssets = convertToValueAssets(shares);
+        secondaryValueAssets = convertToSecondaryValueAssets(shares);
+    }
+
+    /// @notice Burns shares and pays the owner a pro-rata amount of both value tokens.
     function redeemValue(uint256 shares, address receiver, address owner)
         public
         nonReentrant
-        returns (uint256 valueAssets)
+        returns (uint256 valueAssets, uint256 secondaryValueAssets)
     {
         if (shares == 0) revert ZeroShares();
         if (shares > balanceOf(owner)) revert ERC4626ExceededMaxRedeem(owner, shares, balanceOf(owner));
 
         valueAssets = convertToValueAssets(shares);
-        if (valueAssets == 0) revert InsufficientValueAssets();
+        secondaryValueAssets = convertToSecondaryValueAssets(shares);
+        if (valueAssets == 0 && secondaryValueAssets == 0) revert InsufficientValueAssets();
 
         if (msg.sender != owner) _spendAllowance(owner, msg.sender, shares);
 
         _burn(owner, shares);
-        IERC20(valueToken).safeTransfer(receiver, valueAssets);
+        if (valueAssets != 0) IERC20(valueToken).safeTransfer(receiver, valueAssets);
+        if (secondaryValueAssets != 0) IERC20(secondaryValueToken).safeTransfer(receiver, secondaryValueAssets);
 
-        emit ValueRedeemed(msg.sender, receiver, owner, shares, valueAssets);
+        emit ValueRedeemed(msg.sender, receiver, owner, shares, valueAssets, secondaryValueAssets);
     }
 
     /// @dev Strict ERC-4626 withdrawal would return the deposit asset, which is burned here.
@@ -153,7 +175,7 @@ contract DeepstateVault is ERC4626, ERC20Votes, Ownable, ReentrancyGuard {
 
         for (uint256 i; i < tokens.length; ++i) {
             address token = tokens[i];
-            if (token == depositToken || token == valueToken) revert ProtectedToken();
+            if (token == depositToken || token == valueToken || token == secondaryValueToken) revert ProtectedToken();
 
             uint256 balance = IERC20(token).balanceOf(address(this));
             if (balance == 0) continue;

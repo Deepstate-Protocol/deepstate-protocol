@@ -97,6 +97,7 @@ contract DeployDeepstate is Script {
             config.deployer,
             address(deployment.deepstate),
             config.valueToken,
+            config.nvdaToken,
             config.wrappedNative,
             config.vaultName,
             config.vaultSymbol
