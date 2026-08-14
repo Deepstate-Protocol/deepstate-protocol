@@ -31,6 +31,12 @@ therefore enumerate every balance the holder intends to claim. `maxWithdraw`
 and `maxRedeem` return zero; `maxRedeemValue` reports the separate value-token
 redemption capacity.
 
+When the final STATE share is burned, the vault resets
+`totalBurnedDepositAssets` to zero and the next deposit begins a fresh 1:1
+DEEP-to-STATE accounting epoch. This reset never restores DEEP; every deposited
+DEEP remains permanently burned. Any fee asset omitted by the final redeemer
+stays in the vault and becomes available to STATE holders in the next epoch.
+
 ## Governance Clock
 
 STATE and `DeepstateGovernor` use ERC-6372 timestamp checkpoints. Governor
