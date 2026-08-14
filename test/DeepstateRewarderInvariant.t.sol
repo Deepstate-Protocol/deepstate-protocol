@@ -6,11 +6,15 @@ import {Test} from "forge-std/Test.sol";
 
 import {DeepstateRewarder} from "../src/DeepstateRewarder.sol";
 
-contract RewarderInvariantMintable {
+contract RewarderInvariantToken {
     mapping(address account => uint256 balance) public balanceOf;
 
-    function mint(address to, uint256 amount) external {
+    function transfer(address to, uint256 amount) external returns (bool) {
+        uint256 balance = balanceOf[msg.sender];
+        if (balance < amount) return false;
+        balanceOf[msg.sender] = balance - amount;
         balanceOf[to] += amount;
+        return true;
     }
 }
 
@@ -33,7 +37,7 @@ contract DeepstateRewarderHandler is Test {
     uint64 public expectedToken1Cursor;
 
     constructor() {
-        RewarderInvariantMintable rewardToken = new RewarderInvariantMintable();
+        RewarderInvariantToken rewardToken = new RewarderInvariantToken();
         bytes32 poolId = keccak256(abi.encode(TOKEN0, TOKEN1));
         rewarder = new DeepstateRewarder(
             address(this),

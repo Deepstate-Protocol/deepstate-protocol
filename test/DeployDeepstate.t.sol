@@ -39,13 +39,14 @@ contract DeployDeepstateTest is DeployDeepstate, Test {
 
         assertTrue(deployment.deepstate.hasRole(adminRole, address(deployment.governor)));
         assertFalse(deployment.deepstate.hasRole(adminRole, address(this)));
-        assertTrue(deployment.deepstate.hasRole(minterRole, address(deployment.nvdaRewarder)));
-        assertTrue(deployment.deepstate.hasRole(minterRole, address(deployment.deepRewarder)));
+        assertFalse(deployment.deepstate.hasRole(minterRole, address(deployment.nvdaRewarder)));
+        assertFalse(deployment.deepstate.hasRole(minterRole, address(this)));
         assertTrue(deployment.deepstate.hasRole(minterRole, additionalMinter));
+        assertEq(deployment.deepstate.totalSupply(), NVDA_REWARD_ALLOCATION);
+        assertEq(deployment.deepstate.balanceOf(address(deployment.nvdaRewarder)), NVDA_REWARD_ALLOCATION);
 
         assertEq(deployment.vault.owner(), address(deployment.governor));
         assertEq(deployment.nvdaRewarder.owner(), address(deployment.governor));
-        assertEq(deployment.deepRewarder.owner(), address(deployment.governor));
         assertEq(deployment.router.owner(), address(deployment.governor));
         assertEq(deployment.governor.governanceStart(), block.timestamp + 15 days);
         assertEq(deployment.governor.votingDelay(), 3 days);
@@ -56,14 +57,10 @@ contract DeployDeepstateTest is DeployDeepstate, Test {
 
         assertEq(deployment.nvdaRewarder.sideEmissionCap(), NVDA_SIDE_EMISSION_CAP);
         assertEq(deployment.nvdaRewarder.emissionDuration(), NVDA_EMISSION_DURATION);
-        assertEq(deployment.deepRewarder.sideEmissionCap(), DEEP_SIDE_EMISSION_CAP);
-        assertEq(deployment.deepRewarder.emissionDuration(), DEEP_EMISSION_DURATION);
         assertEq(deployment.router.poolHook(deployment.nvdaRewarder.poolId()), address(deployment.nvdaRewarder));
-        assertEq(deployment.router.poolHook(deployment.deepRewarder.poolId()), address(deployment.deepRewarder));
+        bytes32 deepPoolId = deployment.router.poolId(address(deployment.deepstate), address(valueToken));
+        assertEq(deployment.router.poolHook(deepPoolId), address(0));
         _assertRewardQuantities(deployment.nvdaRewarder, address(nvdaToken), address(valueToken), 5_000e18);
-        _assertRewardQuantities(
-            deployment.deepRewarder, address(deployment.deepstate), address(valueToken), 1_000_000e18
-        );
 
         vm.expectRevert(
             abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, address(this), adminRole)
@@ -73,6 +70,7 @@ contract DeployDeepstateTest is DeployDeepstate, Test {
         vm.prank(additionalMinter);
         deployment.deepstate.mint(alice, 1e18);
         assertEq(deployment.deepstate.balanceOf(alice), 1e18);
+        assertEq(deployment.deepstate.totalSupply(), NVDA_REWARD_ALLOCATION + 1e18);
     }
 
     function testConfigReadsExplicitGovernanceLaunchParameters() public {
