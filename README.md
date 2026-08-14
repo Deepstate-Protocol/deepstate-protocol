@@ -90,6 +90,12 @@ registers active orders lazily when necessary, and registered orders can claim
 their final accrual after cancellation without wallet-level transaction batching.
 An order deleted before either registration path permanently loses its claim.
 
+`registerClaimants` caches one engine-verified claimant across multiple live
+orders, while `distributeRewardsBatch` accrues multiple orders and aggregates
+their payout into one DEEP transfer. Both batch paths revert atomically if a
+resolved order belongs to a different claimant, so callers cannot redirect or
+combine rewards belonging to different owners.
+
 ## Fee Purchase Flow
 
 1. Market fees or miscellaneous tokens land in the vault.

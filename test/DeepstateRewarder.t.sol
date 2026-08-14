@@ -12,6 +12,7 @@ import {DeepstateToken} from "../src/DeepstateToken.sol";
 contract RewardTestERC20 is ERC20 {
     string private _name;
     string private _symbol;
+    uint256 public transferCalls;
 
     constructor(string memory name_, string memory symbol_) {
         _name = name_;
@@ -24,6 +25,11 @@ contract RewardTestERC20 is ERC20 {
 
     function symbol() public view override returns (string memory) {
         return _symbol;
+    }
+
+    function transfer(address to, uint256 amount) public override returns (bool) {
+        ++transferCalls;
+        return super.transfer(to, amount);
     }
 
     function mint(address to, uint256 amount) external {
@@ -498,6 +504,179 @@ contract DeepstateRewarderTest is Test {
         rewarder.distributeRewards(id, aliceBid, address(token1));
         assertEq(rewarder.balances(id, address(token1), MAX_ORDER_NONCE), 0);
         assertEq(rewardToken.balanceOf(alice), expected);
+    }
+
+    function test_BatchRegistrationAndClaimPreservesMultipleOrdersAfterCancel() public {
+        bytes32 id = deepstate.bookId(address(token0), address(token1), 0);
+        uint256 initialTimestamp = block.timestamp;
+
+        vm.prank(alice);
+        bytes32 firstAliceBid = deepstate.fill(_fill(0, _order(0, 5e18, 0), true, false, false));
+        vm.warp(initialTimestamp + 1 days);
+        vm.prank(bob);
+        deepstate.fill(_fill(0, _order(1, 7e18, 0), true, false, false));
+        vm.warp(initialTimestamp + 2 days);
+        vm.prank(alice);
+        bytes32 secondAliceBid = deepstate.fill(_fill(0, _order(2, 9e18, 0), true, false, false));
+
+        DeepstateRewarder.OrderReference[] memory registrations = new DeepstateRewarder.OrderReference[](2);
+        registrations[0] = DeepstateRewarder.OrderReference({bookId: id, order: firstAliceBid});
+        registrations[1] = DeepstateRewarder.OrderReference({bookId: id, order: secondAliceBid});
+        vm.prank(bob);
+        assertEq(rewarder.registerClaimants(registrations), alice);
+
+        bytes32 firstOrderId = deepstate.orderId(id, firstAliceBid);
+        bytes32 secondOrderId = deepstate.orderId(id, secondAliceBid);
+        assertEq(rewarder.claimants(firstOrderId), alice);
+        assertEq(rewarder.claimants(secondOrderId), alice);
+
+        vm.warp(initialTimestamp + 3 days);
+        vm.prank(alice);
+        deepstate.cancel(address(token0), address(token1), 0, secondAliceBid);
+        vm.prank(alice);
+        deepstate.cancel(address(token0), address(token1), 0, firstAliceBid);
+        assertEq(deepstate.ownerOfOrder(firstOrderId), address(0));
+        assertEq(deepstate.ownerOfOrder(secondOrderId), address(0));
+
+        uint256 firstReward = rewarder.balances(id, address(token1), MAX_ORDER_NONCE);
+        uint256 secondReward = rewarder.balances(id, address(token1), MAX_ORDER_NONCE - 2);
+        assertGt(firstReward, 0);
+        assertGt(secondReward, 0);
+
+        DeepstateRewarder.RewardClaim[] memory claims = new DeepstateRewarder.RewardClaim[](2);
+        claims[0] = DeepstateRewarder.RewardClaim({bookId: id, order: firstAliceBid, token: address(token1)});
+        claims[1] = DeepstateRewarder.RewardClaim({bookId: id, order: secondAliceBid, token: address(token1)});
+        uint256 fundingBefore = rewardToken.balanceOf(address(rewarder));
+        rewarder.distributeRewardsBatch(claims);
+
+        uint256 totalReward = firstReward + secondReward;
+        assertEq(rewardToken.balanceOf(alice), totalReward);
+        assertEq(rewardToken.balanceOf(address(rewarder)), fundingBefore - totalReward);
+        assertEq(rewardToken.transferCalls(), 1);
+        assertEq(rewarder.balances(id, address(token1), MAX_ORDER_NONCE), 0);
+        assertEq(rewarder.balances(id, address(token1), MAX_ORDER_NONCE - 2), 0);
+    }
+
+    function test_BatchRegistrationRejectsMixedOwnersAtomically() public {
+        bytes32 id = deepstate.bookId(address(token0), address(token1), 0);
+        vm.prank(alice);
+        bytes32 aliceBid = deepstate.fill(_fill(0, _order(0, 5e18, 0), true, false, false));
+        vm.prank(bob);
+        bytes32 bobBid = deepstate.fill(_fill(0, _order(1, 7e18, 0), true, false, false));
+
+        DeepstateRewarder.OrderReference[] memory registrations = new DeepstateRewarder.OrderReference[](2);
+        registrations[0] = DeepstateRewarder.OrderReference({bookId: id, order: aliceBid});
+        registrations[1] = DeepstateRewarder.OrderReference({bookId: id, order: bobBid});
+
+        vm.expectRevert(DeepstateRewarder.ClaimantMismatch.selector);
+        rewarder.registerClaimants(registrations);
+        assertEq(rewarder.claimants(deepstate.orderId(id, aliceBid)), address(0));
+        assertEq(rewarder.claimants(deepstate.orderId(id, bobBid)), address(0));
+    }
+
+    function test_BatchClaimRejectsMixedOwnersAtomically() public {
+        bytes32 id = deepstate.bookId(address(token0), address(token1), 0);
+        uint256 initialTimestamp = block.timestamp;
+        vm.prank(alice);
+        bytes32 aliceBid = deepstate.fill(_fill(0, _order(0, 5e18, 0), true, false, false));
+        vm.warp(initialTimestamp + 1 days);
+        vm.prank(bob);
+        bytes32 bobBid = deepstate.fill(_fill(0, _order(1, 7e18, 0), true, false, false));
+        vm.warp(initialTimestamp + 2 days);
+        vm.prank(alice);
+        deepstate.fill(_fill(0, _order(2, 9e18, 0), true, false, false));
+
+        uint256 aliceReward = rewarder.balances(id, address(token1), MAX_ORDER_NONCE);
+        uint256 bobReward = rewarder.balances(id, address(token1), MAX_ORDER_NONCE - 1);
+        assertGt(aliceReward, 0);
+        assertGt(bobReward, 0);
+
+        DeepstateRewarder.RewardClaim[] memory claims = new DeepstateRewarder.RewardClaim[](2);
+        claims[0] = DeepstateRewarder.RewardClaim({bookId: id, order: aliceBid, token: address(token1)});
+        claims[1] = DeepstateRewarder.RewardClaim({bookId: id, order: bobBid, token: address(token1)});
+
+        vm.expectRevert(DeepstateRewarder.ClaimantMismatch.selector);
+        rewarder.distributeRewardsBatch(claims);
+        assertEq(rewarder.balances(id, address(token1), MAX_ORDER_NONCE), aliceReward);
+        assertEq(rewarder.balances(id, address(token1), MAX_ORDER_NONCE - 1), bobReward);
+        assertEq(rewarder.claimants(deepstate.orderId(id, aliceBid)), address(0));
+        assertEq(rewarder.claimants(deepstate.orderId(id, bobBid)), address(0));
+        assertEq(rewardToken.balanceOf(alice), 0);
+        assertEq(rewardToken.balanceOf(bob), 0);
+        assertEq(rewardToken.transferCalls(), 0);
+    }
+
+    function test_BatchClaimChecksOwnerOfZeroRewardCurrentOrder() public {
+        bytes32 id = deepstate.bookId(address(token0), address(token1), 0);
+        uint256 initialTimestamp = block.timestamp;
+        vm.prank(bob);
+        bytes32 bobBid = deepstate.fill(_fill(0, _order(0, 5e18, 0), true, false, false));
+        vm.warp(initialTimestamp + 1 days);
+        vm.prank(alice);
+        bytes32 aliceBid = deepstate.fill(_fill(0, _order(1, 7e18, 0), true, false, false));
+
+        uint256 bobReward = rewarder.balances(id, address(token1), MAX_ORDER_NONCE);
+        assertGt(bobReward, 0);
+
+        DeepstateRewarder.RewardClaim[] memory claims = new DeepstateRewarder.RewardClaim[](2);
+        claims[0] = DeepstateRewarder.RewardClaim({bookId: id, order: bobBid, token: address(token1)});
+        claims[1] = DeepstateRewarder.RewardClaim({bookId: id, order: aliceBid, token: address(token1)});
+
+        vm.expectRevert(DeepstateRewarder.ClaimantMismatch.selector);
+        rewarder.distributeRewardsBatch(claims);
+        assertEq(rewarder.balances(id, address(token1), MAX_ORDER_NONCE), bobReward);
+        assertEq(rewarder.claimants(deepstate.orderId(id, bobBid)), address(0));
+        assertEq(rewarder.claimants(deepstate.orderId(id, aliceBid)), address(0));
+        assertEq(rewardToken.transferCalls(), 0);
+    }
+
+    function test_DuplicateBatchClaimCannotPayTwice() public {
+        bytes32 id = deepstate.bookId(address(token0), address(token1), 0);
+        vm.prank(alice);
+        bytes32 aliceBid = deepstate.fill(_fill(0, _order(0, 5e18, 0), true, false, false));
+        (, uint64 startedAt) = rewarder.rewardees(address(token1));
+        vm.warp(block.timestamp + 1 days);
+        uint256 expected = rewarder.previewReward(address(token1), startedAt, block.timestamp, 5e18);
+
+        DeepstateRewarder.RewardClaim[] memory claims = new DeepstateRewarder.RewardClaim[](2);
+        claims[0] = DeepstateRewarder.RewardClaim({bookId: id, order: aliceBid, token: address(token1)});
+        claims[1] = claims[0];
+        rewarder.distributeRewardsBatch(claims);
+
+        assertEq(rewardToken.balanceOf(alice), expected);
+        assertEq(rewardToken.transferCalls(), 1);
+    }
+
+    function test_BatchClaimAggregatesBidAndAskForSameOwner() public {
+        bytes32 id = deepstate.bookId(address(token0), address(token1), 0);
+        vm.prank(alice);
+        bytes32 aliceBid = deepstate.fill(_fill(0, _order(0, 5e18, 0), true, false, false));
+        vm.prank(alice);
+        bytes32 aliceAsk = deepstate.fill(_fill(0, _order(20, 8e18, 0), false, false, false));
+        (, uint64 bidStartedAt) = rewarder.rewardees(address(token1));
+        (, uint64 askStartedAt) = rewarder.rewardees(address(token0));
+
+        vm.warp(block.timestamp + 1 days);
+        uint256 bidReward = rewarder.previewReward(address(token1), bidStartedAt, block.timestamp, 5e18);
+        uint256 askReward = rewarder.previewReward(address(token0), askStartedAt, block.timestamp, 8e18);
+
+        DeepstateRewarder.RewardClaim[] memory claims = new DeepstateRewarder.RewardClaim[](2);
+        claims[0] = DeepstateRewarder.RewardClaim({bookId: id, order: aliceBid, token: address(token1)});
+        claims[1] = DeepstateRewarder.RewardClaim({bookId: id, order: aliceAsk, token: address(token0)});
+        rewarder.distributeRewardsBatch(claims);
+
+        assertEq(rewardToken.balanceOf(alice), bidReward + askReward);
+        assertEq(rewardToken.transferCalls(), 1);
+    }
+
+    function test_BatchFunctionsRejectEmptyInput() public {
+        DeepstateRewarder.OrderReference[] memory registrations = new DeepstateRewarder.OrderReference[](0);
+        vm.expectRevert(DeepstateRewarder.EmptyBatch.selector);
+        rewarder.registerClaimants(registrations);
+
+        DeepstateRewarder.RewardClaim[] memory claims = new DeepstateRewarder.RewardClaim[](0);
+        vm.expectRevert(DeepstateRewarder.EmptyBatch.selector);
+        rewarder.distributeRewardsBatch(claims);
     }
 
     function test_ClaimTimeAccrualUsesLiveQuantityAfterPartialFill() public {

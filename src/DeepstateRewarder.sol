@@ -19,6 +19,17 @@ contract DeepstateRewarder is Ownable, IHook {
     using FixedPointMathLib for uint256;
     using SafeERC20 for IERC20;
 
+    struct OrderReference {
+        bytes32 bookId;
+        bytes32 order;
+    }
+
+    struct RewardClaim {
+        bytes32 bookId;
+        bytes32 order;
+        address token;
+    }
+
     /// @notice Time constant used by the logarithmic cumulative emission curve.
     uint256 public constant EMISSION_TIME_CONSTANT = 30 days;
     /// @notice Duration of each side's geometric full-reward-quantity ramp.
@@ -75,6 +86,8 @@ contract DeepstateRewarder is Ownable, IHook {
     error NotDeepstate();
     error InvalidHookToken();
     error NoOrderOwner();
+    error EmptyBatch();
+    error ClaimantMismatch();
 
     constructor(
         address owner_,
@@ -286,10 +299,60 @@ contract DeepstateRewarder is Ownable, IHook {
         return _resolveClaimant(bookId, order);
     }
 
+    /// @notice Cache the same engine-verified claimant for multiple active orders.
+    /// @dev Reverts atomically if the orders do not share one claimant.
+    function registerClaimants(OrderReference[] calldata orders) external returns (address claimant) {
+        uint256 length = orders.length;
+        if (length == 0) revert EmptyBatch();
+
+        for (uint256 i; i < length; ++i) {
+            OrderReference calldata order = orders[i];
+            address current = _resolveClaimant(order.bookId, order.order);
+            if (claimant == address(0)) claimant = current;
+            else if (current != claimant) revert ClaimantMismatch();
+        }
+    }
+
     /// @notice Accrue a live top order and pay all rewards to its verified claimant.
     /// @dev Lazily registers an active order. Register before cancellation to preserve claims after
     /// the engine permanently deletes ownership.
     function distributeRewards(bytes32 bookId, bytes32 order, address token) external {
+        (address claimant, uint256 amount) = _accrueClaim(bookId, order, token);
+        if (amount == 0) return;
+
+        IERC20(rewardToken).safeTransfer(claimant, amount);
+        emit RewardsDistributed(bookId, order, token, claimant, amount);
+    }
+
+    /// @notice Accrue and distribute rewards for multiple orders owned by the same claimant.
+    /// @dev Aggregates the batch into one reward-token transfer and reverts atomically if any
+    /// resolved order belongs to a different claimant.
+    function distributeRewardsBatch(RewardClaim[] calldata claims) external {
+        uint256 length = claims.length;
+        if (length == 0) revert EmptyBatch();
+
+        address claimant;
+        uint256 totalAmount;
+        for (uint256 i; i < length; ++i) {
+            RewardClaim calldata claim = claims[i];
+            (address current, uint256 amount) = _accrueClaim(claim.bookId, claim.order, claim.token);
+            if (current != address(0)) {
+                if (claimant == address(0)) claimant = current;
+                else if (current != claimant) revert ClaimantMismatch();
+            }
+            if (amount == 0) continue;
+            totalAmount += amount;
+
+            emit RewardsDistributed(claim.bookId, claim.order, claim.token, current, amount);
+        }
+
+        if (totalAmount != 0) IERC20(rewardToken).safeTransfer(claimant, totalAmount);
+    }
+
+    function _accrueClaim(bytes32 bookId, bytes32 order, address token)
+        private
+        returns (address claimant, uint256 amount)
+    {
         bool isToken0 = token == token0;
         if (!isToken0 && token != token1) revert InvalidHookToken();
 
@@ -299,10 +362,10 @@ contract DeepstateRewarder is Ownable, IHook {
         bytes32 currentBookId = isToken0 ? _token0BookId : _token1BookId;
         bool isCurrent = currentNonce == nonce && currentBookId == bookId && topStartedAt != 0;
 
-        uint256 amount = balances[bookId][token][nonce];
-        if (amount == 0 && !isCurrent) return;
+        amount = balances[bookId][token][nonce];
+        if (amount == 0 && !isCurrent) return (address(0), 0);
 
-        address claimant = _resolveClaimant(bookId, order);
+        claimant = _resolveClaimant(bookId, order);
 
         if (isCurrent && block.timestamp > topStartedAt) {
             (uint32 liveNonce, uint160 liveAmount) = IOrderBook(deepstate).topOrder(bookId, !isToken0);
@@ -320,11 +383,8 @@ contract DeepstateRewarder is Ownable, IHook {
             }
         }
 
-        if (amount == 0) return;
+        if (amount == 0) return (claimant, 0);
         balances[bookId][token][nonce] = 0;
-        IERC20(rewardToken).safeTransfer(claimant, amount);
-
-        emit RewardsDistributed(bookId, order, token, claimant, amount);
     }
 
     function _resolveClaimant(bytes32 bookId, bytes32 order) private returns (address claimant) {
