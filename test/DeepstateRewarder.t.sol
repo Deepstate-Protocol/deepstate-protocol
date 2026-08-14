@@ -429,6 +429,7 @@ contract DeepstateRewarderTest is Test {
 
         vm.prank(alice);
         bytes32 aliceBid = deepstate.fill(_fill(0, _order(0, 5e18, 0), true, false, false));
+        bytes32 aliceOrderId = deepstate.orderId(id, aliceBid);
         (, uint64 startedAt) = rewarder.rewardees(address(token1));
         vm.warp(block.timestamp + 1 days);
 
@@ -437,27 +438,84 @@ contract DeepstateRewarderTest is Test {
         deepstate.fill(_fill(0, _order(1, 7e18, 0), true, false, false));
 
         assertEq(rewarder.balances(id, address(token1), MAX_ORDER_NONCE), expected);
+        assertEq(rewarder.claimants(aliceOrderId), address(0));
         rewarder.distributeRewards(id, aliceBid, address(token1));
         assertEq(rewardToken.balanceOf(alice), expected);
         assertEq(rewarder.balances(id, address(token1), MAX_ORDER_NONCE), 0);
+        assertEq(rewarder.claimants(aliceOrderId), alice);
     }
 
-    function test_DistributeAccruesLiveTopBeforeTransferAndCancel() public {
+    function test_InlineRegistrationPreservesFinalAccrualAfterCancel() public {
         bytes32 id = deepstate.bookId(address(token0), address(token1), 0);
 
         vm.prank(alice);
         bytes32 aliceBid = deepstate.fill(_fill(0, _order(0, 5e18, 0), true, false, false));
+        bytes32 aliceOrderId = deepstate.orderId(id, aliceBid);
         (, uint64 startedAt) = rewarder.rewardees(address(token1));
         vm.warp(block.timestamp + 1 days);
-        uint256 expected = rewarder.previewReward(address(token1), startedAt, block.timestamp, 5e18);
+        uint256 firstReward = rewarder.previewReward(address(token1), startedAt, block.timestamp, 5e18);
 
         rewarder.distributeRewards(id, aliceBid, address(token1));
-        assertEq(rewardToken.balanceOf(alice), expected);
+        assertEq(rewardToken.balanceOf(alice), firstReward);
+        assertEq(rewarder.claimants(aliceOrderId), alice);
         (, uint64 claimedAt) = rewarder.rewardees(address(token1));
         assertEq(claimedAt, block.timestamp);
 
+        vm.warp(block.timestamp + 1 hours);
+        uint256 finalReward = rewarder.previewReward(address(token1), claimedAt, block.timestamp, 5e18);
         vm.prank(alice);
         deepstate.cancel(address(token0), address(token1), 0, aliceBid);
+        assertEq(deepstate.ownerOfOrder(aliceOrderId), address(0));
+        assertEq(rewarder.balances(id, address(token1), MAX_ORDER_NONCE), finalReward);
+
+        rewarder.distributeRewards(id, aliceBid, address(token1));
+        assertEq(rewarder.balances(id, address(token1), MAX_ORDER_NONCE), 0);
+        assertEq(rewardToken.balanceOf(alice), firstReward + finalReward);
+    }
+
+    function test_PermissionlessRegistrationAllowsClaimAfterCancel() public {
+        bytes32 id = deepstate.bookId(address(token0), address(token1), 0);
+
+        vm.prank(alice);
+        bytes32 aliceBid = deepstate.fill(_fill(0, _order(0, 5e18, 0), true, false, false));
+        bytes32 aliceOrderId = deepstate.orderId(id, aliceBid);
+        (, uint64 startedAt) = rewarder.rewardees(address(token1));
+
+        vm.prank(bob);
+        address claimant = rewarder.registerClaimant(id, aliceBid);
+        assertEq(claimant, alice);
+        assertEq(rewarder.claimants(aliceOrderId), alice);
+
+        vm.warp(block.timestamp + 1 days);
+        uint256 expected = rewarder.previewReward(address(token1), startedAt, block.timestamp, 5e18);
+        vm.prank(alice);
+        deepstate.cancel(address(token0), address(token1), 0, aliceBid);
+        assertEq(deepstate.ownerOfOrder(aliceOrderId), address(0));
+
+        assertEq(rewarder.registerClaimant(id, aliceBid), alice);
+        rewarder.distributeRewards(id, aliceBid, address(token1));
+        assertEq(rewardToken.balanceOf(alice), expected);
+    }
+
+    function test_RegisteredDisplacedOrderCanClaimAfterNonTopCancel() public {
+        bytes32 id = deepstate.bookId(address(token0), address(token1), 0);
+
+        vm.prank(alice);
+        bytes32 aliceBid = deepstate.fill(_fill(0, _order(0, 5e18, 0), true, false, false));
+        bytes32 aliceOrderId = deepstate.orderId(id, aliceBid);
+        rewarder.registerClaimant(id, aliceBid);
+
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(bob);
+        deepstate.fill(_fill(0, _order(1, 7e18, 0), true, false, false));
+        uint256 expected = rewarder.balances(id, address(token1), MAX_ORDER_NONCE);
+        assertGt(expected, 0);
+
+        vm.prank(alice);
+        deepstate.cancel(address(token0), address(token1), 0, aliceBid);
+        assertEq(deepstate.ownerOfOrder(aliceOrderId), address(0));
+
+        rewarder.distributeRewards(id, aliceBid, address(token1));
         assertEq(rewarder.balances(id, address(token1), MAX_ORDER_NONCE), 0);
         assertEq(rewardToken.balanceOf(alice), expected);
     }
@@ -531,7 +589,7 @@ contract DeepstateRewarderTest is Test {
         assertEq(rewarder.balances(id, address(token1), MAX_ORDER_NONCE), 0);
     }
 
-    function test_DistributeRequiresOrderOwnershipWhenBalanceExists() public {
+    function test_UnregisteredDeletedOrderCannotClaim() public {
         bytes32 id = deepstate.bookId(address(token0), address(token1), 0);
         vm.prank(alice);
         bytes32 aliceBid = deepstate.fill(_fill(0, _order(0, 5e18, 0), true, false, false));
@@ -541,8 +599,20 @@ contract DeepstateRewarderTest is Test {
 
         vm.prank(alice);
         deepstate.cancel(address(token0), address(token1), 0, aliceBid);
+        uint256 stranded = rewarder.balances(id, address(token1), MAX_ORDER_NONCE);
+        assertGt(stranded, 0);
+
         vm.expectRevert(DeepstateRewarder.NoOrderOwner.selector);
         rewarder.distributeRewards(id, aliceBid, address(token1));
+        assertEq(rewarder.balances(id, address(token1), MAX_ORDER_NONCE), stranded);
+
+        vm.expectRevert(DeepstateRewarder.NoOrderOwner.selector);
+        rewarder.registerClaimant(id, aliceBid);
+    }
+
+    function test_RegisterClaimantRejectsUnknownOrder() public {
+        vm.expectRevert(DeepstateRewarder.NoOrderOwner.selector);
+        rewarder.registerClaimant(EMPTY_BOOK_ID, bytes32(uint256(1)));
     }
 
     function test_RevokedMinterRoleRollsBackClaimAccrual() public {
@@ -570,10 +640,49 @@ contract DeepstateRewarderTest is Test {
         (, uint64 afterFailedClaimStart) = roleRewarder.rewardees(address(token1));
         assertEq(afterFailedClaimStart, beforeClaimStart);
         assertEq(roleRewarder.totalAccrued(address(token1)), 0);
+        assertEq(roleRewarder.claimants(deepstate.orderId(id, aliceBid)), address(0));
 
         deep.grantRole(minterRole, address(roleRewarder));
         roleRewarder.distributeRewards(id, aliceBid, address(token1));
         assertGt(deep.balanceOf(alice), 0);
+        assertEq(roleRewarder.claimants(deepstate.orderId(id, aliceBid)), alice);
+    }
+
+    function test_RegisteredPostCancelClaimCanRetryAfterMinterRestored() public {
+        DeepstateToken deep = new DeepstateToken(address(this), "Deepstate", "DEEP");
+        DeepstateRewarder roleRewarder = _deployRewarder(
+            address(deep), NVDA_SIDE_CAP, NVDA_DURATION, START_QUANTITY, MAX_QUANTITY, START_QUANTITY, MAX_QUANTITY
+        );
+        bytes32 minterRole = deep.MINTER_ROLE();
+        deep.grantRole(minterRole, address(roleRewarder));
+        deepstate.setPoolHookConfig(address(token0), address(token1), address(roleRewarder), true, true);
+
+        bytes32 id = deepstate.bookId(address(token0), address(token1), 0);
+        vm.prank(alice);
+        bytes32 aliceBid = deepstate.fill(_fill(0, _order(0, 5e18, 0), true, false, false));
+        bytes32 aliceOrderId = deepstate.orderId(id, aliceBid);
+        roleRewarder.registerClaimant(id, aliceBid);
+
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(alice);
+        deepstate.cancel(address(token0), address(token1), 0, aliceBid);
+        uint256 pending = roleRewarder.balances(id, address(token1), MAX_ORDER_NONCE);
+        assertGt(pending, 0);
+
+        deep.revokeRole(minterRole, address(roleRewarder));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, address(roleRewarder), minterRole
+            )
+        );
+        roleRewarder.distributeRewards(id, aliceBid, address(token1));
+        assertEq(roleRewarder.balances(id, address(token1), MAX_ORDER_NONCE), pending);
+        assertEq(roleRewarder.claimants(aliceOrderId), alice);
+
+        deep.grantRole(minterRole, address(roleRewarder));
+        roleRewarder.distributeRewards(id, aliceBid, address(token1));
+        assertEq(roleRewarder.balances(id, address(token1), MAX_ORDER_NONCE), 0);
+        assertEq(deep.balanceOf(alice), pending);
     }
 
     function test_ExecuteValidationAndViewsRejectUnknownTokens() public {
