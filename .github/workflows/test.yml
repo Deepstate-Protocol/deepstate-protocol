@@ -1,23 +1,45 @@
 name: CI
 
-permissions: {}
+permissions:
+  contents: read
 
 on:
-  push:
   pull_request:
+    branches:
+      - master
+  push:
+    branches:
+      - master
+  merge_group:
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 env:
   FOUNDRY_PROFILE: ci
+  FOUNDRY_DISABLE_NIGHTLY_WARNING: "1"
 
 jobs:
-  check:
-    name: Foundry project
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
+  verify:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: true
+      max-parallel: 3
+      matrix:
+        include:
+          - name: Required / Quality
+            check: quality
+          - name: Required / Behavioral Tests
+            check: tests
+          - name: Required / Invariants
+            check: invariants
     steps:
-      - uses: actions/checkout@v5
+      - name: Check out repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
 
@@ -36,16 +58,28 @@ jobs:
           git submodule update --init --recursive --depth 1
 
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
+        uses: foundry-rs/foundry-toolchain@b00af27efadbc7b4ca8b82abbd903b17cc874d2a # v1.9.0
+        with:
+          version: nightly-d3167db683c001c196126c912027437a9cb0bfb9
 
-      - name: Show Forge version
-        run: forge --version
-
-      - name: Run Forge fmt
-        run: forge fmt --check
-
-      - name: Run Forge build
-        run: forge build --sizes
-
-      - name: Run Forge tests
-        run: forge test -vvv
+      - name: Run ${{ matrix.name }}
+        shell: bash
+        env:
+          CHECK: ${{ matrix.check }}
+        run: |
+          case "$CHECK" in
+            quality)
+              forge fmt --check
+              forge build --sizes --threads 0
+              ;;
+            tests)
+              forge test -vvv --threads 0 --no-match-contract '.*Invariant.*'
+              ;;
+            invariants)
+              forge test -vvv --threads 0 --match-contract '.*Invariant.*'
+              ;;
+            *)
+              echo "Unknown CI check: $CHECK" >&2
+              exit 1
+              ;;
+          esac
