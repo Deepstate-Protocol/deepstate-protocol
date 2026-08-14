@@ -2,8 +2,6 @@
 pragma solidity 0.8.28;
 
 import {Script, console2} from "forge-std/Script.sol";
-import {FeeFlowController} from "fee-flow/FeeFlowController.sol";
-import {EthereumVaultConnector} from "evc/EthereumVaultConnector.sol";
 import {DeepstateV1} from "deepstate-contracts/DeepstateV1.sol";
 import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
 
@@ -17,10 +15,6 @@ interface IERC20Decimals {
 }
 
 contract DeployDeepstate is Script {
-    uint256 internal constant DEFAULT_FEE_FLOW_INIT_PRICE = 100e6;
-    uint256 internal constant DEFAULT_FEE_FLOW_EPOCH_PERIOD = 14 days;
-    uint256 internal constant DEFAULT_FEE_FLOW_PRICE_MULTIPLIER = 2e18;
-    uint256 internal constant DEFAULT_FEE_FLOW_MIN_INIT_PRICE = 1e6;
     uint16 internal constant DEFAULT_ROUTER_FEE_BPS = 10;
 
     uint48 internal constant DEFAULT_GOVERNANCE_START_DELAY = 15 days;
@@ -49,25 +43,18 @@ contract DeployDeepstate is Script {
         DeepstateV1 router;
         DeepstateRewarder nvdaRewarder;
         DeepstateRewarder deepRewarder;
-        EthereumVaultConnector evc;
-        FeeFlowController feeFlow;
     }
 
     struct Config {
         address deployer;
         address valueToken;
         address nvdaToken;
-        address wrappedNative;
         address deepstateMinter;
         string tokenName;
         string tokenSymbol;
         string vaultName;
         string vaultSymbol;
         uint16 routerFeeBps;
-        uint256 feeFlowInitPrice;
-        uint256 feeFlowEpochPeriod;
-        uint256 feeFlowPriceMultiplier;
-        uint256 feeFlowMinInitPrice;
         uint48 governanceStartDelay;
         uint48 votingDelay;
         uint32 votingPeriod;
@@ -94,22 +81,7 @@ contract DeployDeepstate is Script {
         deployment.deepstate = new DeepstateToken(config.deployer, config.tokenName, config.tokenSymbol);
         deployment.router = new DeepstateV1();
         deployment.vault = new DeepstateVault(
-            config.deployer,
-            address(deployment.deepstate),
-            config.valueToken,
-            config.wrappedNative,
-            config.vaultName,
-            config.vaultSymbol
-        );
-        deployment.evc = new EthereumVaultConnector();
-        deployment.feeFlow = new FeeFlowController(
-            address(deployment.evc),
-            config.feeFlowInitPrice,
-            config.valueToken,
-            address(deployment.vault),
-            config.feeFlowEpochPeriod,
-            config.feeFlowPriceMultiplier,
-            config.feeFlowMinInitPrice
+            config.deployer, address(deployment.deepstate), config.valueToken, config.vaultName, config.vaultSymbol
         );
 
         deployment.nvdaRewarder = _deployRewarder(
@@ -140,7 +112,6 @@ contract DeployDeepstate is Script {
             config.voteExtension
         );
 
-        deployment.vault.setAuction(address(deployment.feeFlow));
         bytes32 minterRole = deployment.deepstate.MINTER_ROLE();
         deployment.deepstate.grantRole(minterRole, address(deployment.nvdaRewarder));
         deployment.deepstate.grantRole(minterRole, address(deployment.deepRewarder));
@@ -164,7 +135,6 @@ contract DeployDeepstate is Script {
         require(deployment.nvdaRewarder.owner() == governor, "NVDA_REWARDER_OWNER");
         require(deployment.deepRewarder.owner() == governor, "DEEP_REWARDER_OWNER");
         require(deployment.router.owner() == governor, "ROUTER_OWNER");
-        require(deployment.vault.auction() == address(deployment.feeFlow), "VAULT_AUCTION");
         require(deployment.nvdaRewarder.deepstate() == address(deployment.router), "NVDA_REWARDER_DEEPSTATE");
         require(deployment.deepRewarder.deepstate() == address(deployment.router), "DEEP_REWARDER_DEEPSTATE");
         require(
@@ -188,17 +158,12 @@ contract DeployDeepstate is Script {
         config.deployer = deployer;
         config.valueToken = vm.envAddress("VALUE_TOKEN");
         config.nvdaToken = vm.envAddress("NVDA_TOKEN");
-        config.wrappedNative = vm.envOr("WRAPPED_NATIVE", address(0));
         config.deepstateMinter = vm.envOr("DEEP_MINTER", address(0));
         config.tokenName = vm.envOr("DEEP_TOKEN_NAME", string("Deepstate"));
         config.tokenSymbol = vm.envOr("DEEP_TOKEN_SYMBOL", string("DEEP"));
         config.vaultName = vm.envOr("DEEP_VAULT_NAME", string("Deepstate Governance"));
         config.vaultSymbol = vm.envOr("DEEP_VAULT_SYMBOL", string("STATE"));
         config.routerFeeBps = _toUint16(vm.envOr("ROUTER_FEE_BPS", uint256(DEFAULT_ROUTER_FEE_BPS)));
-        config.feeFlowInitPrice = vm.envOr("FEE_FLOW_INIT_PRICE", DEFAULT_FEE_FLOW_INIT_PRICE);
-        config.feeFlowEpochPeriod = vm.envOr("FEE_FLOW_EPOCH_PERIOD", DEFAULT_FEE_FLOW_EPOCH_PERIOD);
-        config.feeFlowPriceMultiplier = vm.envOr("FEE_FLOW_PRICE_MULTIPLIER", DEFAULT_FEE_FLOW_PRICE_MULTIPLIER);
-        config.feeFlowMinInitPrice = vm.envOr("FEE_FLOW_MIN_INIT_PRICE", DEFAULT_FEE_FLOW_MIN_INIT_PRICE);
         config.governanceStartDelay =
             _toUint48(vm.envOr("GOVERNOR_START_DELAY", uint256(DEFAULT_GOVERNANCE_START_DELAY)));
         config.votingDelay = _toUint48(vm.envOr("GOVERNOR_VOTING_DELAY", uint256(DEFAULT_VOTING_DELAY)));
@@ -273,7 +238,5 @@ contract DeployDeepstate is Script {
         console2.log("DeepstateV1", address(deployment.router));
         console2.log("NVDA/USDG DeepstateRewarder", address(deployment.nvdaRewarder));
         console2.log("DEEP/USDG DeepstateRewarder", address(deployment.deepRewarder));
-        console2.log("EthereumVaultConnector", address(deployment.evc));
-        console2.log("FeeFlowController", address(deployment.feeFlow));
     }
 }

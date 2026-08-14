@@ -1,7 +1,4 @@
 forge-std/=lib/forge-std/src/
 solady/=lib/solady/src/
-fee-flow/=lib/fee-flow/src/
-evc/=lib/fee-flow/lib/ethereum-vault-connector/src/
-solmate/=lib/fee-flow/lib/solmate/src/
 deepstate-contracts/=lib/deepstate-contracts/src/
 @openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/

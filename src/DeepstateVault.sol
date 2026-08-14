@@ -7,12 +7,14 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {ERC20Votes} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Votes.sol";
 import {ERC4626} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {SlotDerivation} from "@openzeppelin/contracts/utils/SlotDerivation.sol";
+import {TransientSlot} from "@openzeppelin/contracts/utils/TransientSlot.sol";
 
 import {IBurnableERC20} from "./interfaces/IBurnableERC20.sol";
-import {IWrappedNative} from "./interfaces/IWrappedNative.sol";
 
 /// @notice STATE governance share vault with ERC-4626 deposit math over burned DEEP.
 /// @dev ERC-4626 has one underlying asset. This vault deliberately separates the
@@ -20,46 +22,55 @@ import {IWrappedNative} from "./interfaces/IWrappedNative.sol";
 contract DeepstateVault is ERC4626, ERC20Votes, Ownable, ReentrancyGuard {
     using Math for uint256;
     using SafeERC20 for IERC20;
+    using SlotDerivation for bytes32;
+    using TransientSlot for *;
+
+    bytes32 private constant _ASSET_LIST_CALL_MARKER_SLOT = keccak256("DeepstateVault.assetList.callMarker");
+    bytes32 private constant _ASSET_LIST_SEEN_SEED = keccak256("DeepstateVault.assetList.seen");
+
+    /// @notice Fixed price for purchasing the vault's listed non-USDG fee balances.
+    uint256 public constant FEE_PURCHASE_PRICE = 10_000e6;
 
     address public immutable depositToken;
     address public immutable valueToken;
-    address public immutable wrappedNative;
 
     uint256 public totalBurnedDepositAssets;
-    address public auction;
 
     event DepositAssetBurned(address indexed by, uint256 amount);
     event ValueRedeemed(
         address indexed by, address indexed receiver, address indexed owner, uint256 shares, uint256 valueAssets
     );
-    event AuctionSet(address indexed auction);
-    event SweptToAuction(address indexed token, uint256 amount);
-    event NativeSweptToAuction(uint256 amount);
+    event AssetsRedeemed(address indexed by, address indexed receiver, address indexed owner, uint256 shares);
+    event AssetRedeemed(address indexed receiver, address indexed asset, uint256 amount);
+    event FeesPurchased(address indexed buyer, address indexed receiver, uint256 paymentAmount);
+    event FeeAssetPurchased(address indexed receiver, address indexed asset, uint256 amount);
 
     error ZeroAddress();
     error ZeroShares();
     error ZeroAssets();
     error ProtectedToken();
-    error AuctionNotSet();
     error InsufficientValueAssets();
     error UseRedeemValue();
-    error WrappedNativeNotSet();
+    error EmptyAssetList();
+    error DuplicateAsset();
+    error InsufficientRedeemableAssets();
+    error InsufficientFeeAssets();
+    error ArrayLengthMismatch();
+    error MinimumAssetAmountNotMet(address token, uint256 amount, uint256 minimum);
+    error InvalidFeePayment();
 
-    constructor(
-        address owner_,
-        address depositToken_,
-        address valueToken_,
-        address wrappedNative_,
-        string memory name_,
-        string memory symbol_
-    ) ERC20(name_, symbol_) ERC4626(IERC20(depositToken_)) EIP712(name_, "1") Ownable(owner_) {
+    constructor(address owner_, address depositToken_, address valueToken_, string memory name_, string memory symbol_)
+        ERC20(name_, symbol_)
+        ERC4626(IERC20(depositToken_))
+        EIP712(name_, "1")
+        Ownable(owner_)
+    {
         if (depositToken_ == address(0) || valueToken_ == address(0)) {
             revert ZeroAddress();
         }
 
         depositToken = depositToken_;
         valueToken = valueToken_;
-        wrappedNative = wrappedNative_;
     }
 
     receive() external payable {}
@@ -115,6 +126,106 @@ contract DeepstateVault is ERC4626, ERC20Votes, Ownable, ReentrancyGuard {
         emit ValueRedeemed(msg.sender, receiver, owner, shares, valueAssets);
     }
 
+    /// @notice Burns STATE and pays a pro-rata share of each explicitly listed vault asset.
+    /// @dev Use address(0) for native ETH. DEEP and STATE cannot be redeemed through this path.
+    /// All payouts use pre-burn balances and supply; omitted assets remain in the vault.
+    function redeemAssets(uint256 shares, address receiver, address owner, address[] calldata tokens)
+        external
+        nonReentrant
+        returns (uint256[] memory assets)
+    {
+        if (shares == 0) revert ZeroShares();
+        if (receiver == address(0)) revert ZeroAddress();
+
+        uint256 ownerBalance = balanceOf(owner);
+        if (shares > ownerBalance) revert ERC4626ExceededMaxRedeem(owner, shares, ownerBalance);
+
+        uint256 length = tokens.length;
+        if (length == 0) revert EmptyAssetList();
+
+        uint256 supply = totalSupply();
+        uint256 marker = _nextAssetListCallMarker();
+        assets = new uint256[](length);
+        bool hasAssets;
+
+        for (uint256 i; i < length; ++i) {
+            address token = tokens[i];
+            _validateListedAsset(token, marker);
+
+            uint256 amount = shares.mulDiv(_vaultBalance(token), supply);
+            assets[i] = amount;
+            if (amount != 0) hasAssets = true;
+        }
+
+        if (!hasAssets) revert InsufficientRedeemableAssets();
+        if (msg.sender != owner) _spendAllowance(owner, msg.sender, shares);
+
+        _burn(owner, shares);
+
+        for (uint256 i; i < length; ++i) {
+            uint256 amount = assets[i];
+            if (amount == 0) continue;
+
+            address token = tokens[i];
+            _transferAsset(token, receiver, amount);
+
+            emit AssetRedeemed(receiver, token, amount);
+        }
+
+        emit AssetsRedeemed(msg.sender, receiver, owner, shares);
+    }
+
+    /// @notice Pays 10,000 USDG for the vault's complete balances of the explicitly listed fee assets.
+    /// @dev Use address(0) for native ETH. DEEP, STATE, and USDG cannot be purchased.
+    function buyFees(address[] calldata tokens, uint256[] calldata minimumAmounts, address receiver)
+        external
+        nonReentrant
+        returns (uint256[] memory assets)
+    {
+        if (receiver == address(0)) revert ZeroAddress();
+
+        uint256 length = tokens.length;
+        if (length == 0) revert EmptyAssetList();
+        if (minimumAmounts.length != length) revert ArrayLengthMismatch();
+
+        uint256 marker = _nextAssetListCallMarker();
+        assets = new uint256[](length);
+        bool hasAssets;
+
+        for (uint256 i; i < length; ++i) {
+            address token = tokens[i];
+            _validateListedAsset(token, marker);
+            if (token == valueToken) revert ProtectedToken();
+
+            uint256 amount = _vaultBalance(token);
+            uint256 minimum = minimumAmounts[i];
+            if (amount < minimum) revert MinimumAssetAmountNotMet(token, amount, minimum);
+
+            assets[i] = amount;
+            if (amount != 0) hasAssets = true;
+        }
+
+        if (!hasAssets) revert InsufficientFeeAssets();
+
+        uint256 paymentBalanceBefore = IERC20(valueToken).balanceOf(address(this));
+        IERC20(valueToken).safeTransferFrom(msg.sender, address(this), FEE_PURCHASE_PRICE);
+        uint256 paymentBalanceAfter = IERC20(valueToken).balanceOf(address(this));
+        if (paymentBalanceAfter != paymentBalanceBefore + FEE_PURCHASE_PRICE) {
+            revert InvalidFeePayment();
+        }
+
+        for (uint256 i; i < length; ++i) {
+            uint256 amount = assets[i];
+            if (amount == 0) continue;
+
+            address token = tokens[i];
+            _transferAsset(token, receiver, amount);
+            emit FeeAssetPurchased(receiver, token, amount);
+        }
+
+        emit FeesPurchased(msg.sender, receiver, FEE_PURCHASE_PRICE);
+    }
+
     /// @dev Strict ERC-4626 withdrawal would return the deposit asset, which is burned here.
     function withdraw(uint256, address, address) public pure override returns (uint256) {
         revert UseRedeemValue();
@@ -138,44 +249,6 @@ contract DeepstateVault is ERC4626, ERC20Votes, Ownable, ReentrancyGuard {
     /// @notice Maximum STATE shares an owner may redeem for the value token.
     function maxRedeemValue(address owner) public view returns (uint256) {
         return balanceOf(owner);
-    }
-
-    function setAuction(address auction_) external onlyOwner {
-        if (auction_ == address(0)) revert ZeroAddress();
-        auction = auction_;
-        emit AuctionSet(auction_);
-    }
-
-    /// @notice Moves non-protected ERC-20 fee assets from the vault to the auction.
-    function sweepToAuction(address[] calldata tokens) external onlyOwner nonReentrant {
-        address auction_ = auction;
-        if (auction_ == address(0)) revert AuctionNotSet();
-
-        for (uint256 i; i < tokens.length; ++i) {
-            address token = tokens[i];
-            if (token == depositToken || token == valueToken) revert ProtectedToken();
-
-            uint256 balance = IERC20(token).balanceOf(address(this));
-            if (balance == 0) continue;
-
-            IERC20(token).safeTransfer(auction_, balance);
-            emit SweptToAuction(token, balance);
-        }
-    }
-
-    /// @notice Wraps raw ETH fee assets and moves the wrapped native token to the auction.
-    function sweepNativeToAuction() external onlyOwner nonReentrant {
-        address auction_ = auction;
-        if (auction_ == address(0)) revert AuctionNotSet();
-        address wrappedNative_ = wrappedNative;
-        if (wrappedNative_ == address(0)) revert WrappedNativeNotSet();
-
-        uint256 balance = address(this).balance;
-        if (balance == 0) return;
-
-        IWrappedNative(wrappedNative_).deposit{value: balance}();
-        IERC20(wrappedNative_).safeTransfer(auction_, balance);
-        emit NativeSweptToAuction(balance);
     }
 
     function _deposit(address caller, address receiver, uint256 assets, uint256 shares) internal override nonReentrant {
@@ -204,6 +277,32 @@ contract DeepstateVault is ERC4626, ERC20Votes, Ownable, ReentrancyGuard {
 
     function _selfDelegateIfUnset(address account) private {
         if (delegates(account) == address(0)) _delegate(account, account);
+    }
+
+    function _vaultBalance(address token) private view returns (uint256) {
+        return token == address(0) ? address(this).balance : IERC20(token).balanceOf(address(this));
+    }
+
+    function _validateListedAsset(address token, uint256 marker) private {
+        if (token == depositToken || token == address(this)) revert ProtectedToken();
+        _markAssetSeen(token, marker);
+    }
+
+    function _transferAsset(address token, address receiver, uint256 amount) private {
+        if (token == address(0)) Address.sendValue(payable(receiver), amount);
+        else IERC20(token).safeTransfer(receiver, amount);
+    }
+
+    function _nextAssetListCallMarker() private returns (uint256 marker) {
+        TransientSlot.Uint256Slot slot = _ASSET_LIST_CALL_MARKER_SLOT.asUint256();
+        marker = slot.tload() + 1;
+        slot.tstore(marker);
+    }
+
+    function _markAssetSeen(address token, uint256 marker) private {
+        TransientSlot.Uint256Slot slot = _ASSET_LIST_SEEN_SEED.deriveMapping(token).asUint256();
+        if (slot.tload() == marker) revert DuplicateAsset();
+        slot.tstore(marker);
     }
 
     function _update(address from, address to, uint256 value) internal override(ERC20, ERC20Votes) {

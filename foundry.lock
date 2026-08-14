@@ -2,9 +2,6 @@
   "lib/deepstate-contracts": {
     "rev": "56c7434aceb437b17cf5814fe6e4e30d26028dfd"
   },
-  "lib/fee-flow": {
-    "rev": "3bee858a1568d1313f37d615953f83391a897866"
-  },
   "lib/forge-std": {
     "tag": {
       "name": "v1.16.1",
