@@ -34,9 +34,11 @@ contract DeepstateVault is ERC4626, ERC20Votes, Ownable, ReentrancyGuard {
     address public immutable depositToken;
     address public immutable valueToken;
 
+    /// @notice Burned DEEP used to price STATE in the current nonempty supply epoch.
     uint256 public totalBurnedDepositAssets;
 
     event DepositAssetBurned(address indexed by, uint256 amount);
+    event DepositAccountingReset(uint256 previousBurnedAssets);
     event ValueRedeemed(
         address indexed by, address indexed receiver, address indexed owner, uint256 shares, uint256 valueAssets
     );
@@ -307,5 +309,12 @@ contract DeepstateVault is ERC4626, ERC20Votes, Ownable, ReentrancyGuard {
 
     function _update(address from, address to, uint256 value) internal override(ERC20, ERC20Votes) {
         super._update(from, to, value);
+
+        if (to == address(0) && totalSupply() == 0) {
+            // No STATE remains to price against historical burns; the next epoch starts 1:1.
+            uint256 previousBurnedAssets = totalBurnedDepositAssets;
+            totalBurnedDepositAssets = 0;
+            emit DepositAccountingReset(previousBurnedAssets);
+        }
     }
 }

@@ -73,6 +73,8 @@ contract DeepstateVaultTest is Test {
     bytes32 internal constant EIP712_DOMAIN_TYPEHASH =
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
 
+    event DepositAccountingReset(uint256 previousBurnedAssets);
+
     address internal owner = makeAddr("owner");
     address internal alice = makeAddr("alice");
     address internal bob = makeAddr("bob");
@@ -445,6 +447,37 @@ contract DeepstateVaultTest is Test {
         assertEq(vault.convertToValueAssets(50e18), 250e6);
     }
 
+    function testFinalStateBurnResetsAccountingAndStartsFreshEpoch() public {
+        uint256 deepSupplyBefore = depositToken.totalSupply();
+
+        vm.prank(alice);
+        vault.deposit(100e18, alice);
+        valueToken.mint(address(vault), 500e6);
+
+        vm.expectEmit(false, false, false, true, address(vault));
+        emit DepositAccountingReset(100e18);
+        vm.prank(alice);
+        uint256 redeemed = vault.redeemValue(100e18, alice, alice);
+
+        assertEq(redeemed, 500e6);
+        assertEq(vault.totalSupply(), 0);
+        assertEq(vault.totalAssets(), 0);
+        assertEq(vault.totalBurnedDepositAssets(), 0);
+        assertEq(vault.getVotes(alice), 0);
+        assertEq(depositToken.totalSupply(), deepSupplyBefore - 100e18);
+
+        vm.prank(bob);
+        uint256 bobShares = vault.deposit(1, bob);
+        vm.prank(carol);
+        uint256 carolShares = vault.deposit(50e18, carol);
+
+        assertEq(bobShares, 1);
+        assertEq(carolShares, 50e18);
+        assertEq(vault.totalAssets(), 50e18 + 1);
+        assertEq(vault.totalSupply(), 50e18 + 1);
+        assertEq(depositToken.totalSupply(), deepSupplyBefore - 150e18 - 1);
+    }
+
     function testValueRedeemRevertsWhenNoValueAssetsOrZeroShares() public {
         vm.prank(alice);
         vault.deposit(100e18, alice);
@@ -516,6 +549,24 @@ contract DeepstateVaultTest is Test {
         assertEq(vault.balanceOf(alice), 50e18);
         assertEq(vault.totalSupply(), 150e18);
         assertEq(vault.getVotes(alice), 50e18);
+    }
+
+    function testFinalMultiAssetRedemptionResetsDepositAccounting() public {
+        vm.prank(alice);
+        vault.deposit(100e18, alice);
+        feeToken.mint(address(vault), 10e18);
+
+        address[] memory tokens = new address[](1);
+        tokens[0] = address(feeToken);
+
+        vm.prank(alice);
+        uint256[] memory assets = vault.redeemAssets(100e18, alice, alice, tokens);
+
+        assertEq(assets[0], 10e18);
+        assertEq(feeToken.balanceOf(alice), 10e18);
+        assertEq(vault.totalSupply(), 0);
+        assertEq(vault.totalAssets(), 0);
+        assertEq(vault.totalBurnedDepositAssets(), 0);
     }
 
     function testRedeemAssetsLeavesUnlistedAndZeroBalanceAssetsUntouched() public {
@@ -963,6 +1014,37 @@ contract DeepstateVaultTest is Test {
         assertEq(vault.getVotes(alice), aliceShares - aliceRedeemShares);
         assertEq(vault.getVotes(bob), bobShares);
         assertEq(depositToken.balanceOf(address(vault)), 0);
+    }
+
+    function testFuzzFinalRedemptionStartsFreshOneToOneEpoch(
+        uint96 firstDepositSeed,
+        uint96 nextDepositSeed,
+        uint96 valueDepositSeed
+    ) public {
+        uint256 firstDeposit = bound(uint256(firstDepositSeed), 1, 100e18);
+        uint256 nextDeposit = bound(uint256(nextDepositSeed), 1, 100e18);
+        uint256 valueDeposit = bound(uint256(valueDepositSeed), 1, 1_000_000e6);
+        uint256 deepSupplyBefore = depositToken.totalSupply();
+
+        vm.prank(alice);
+        uint256 firstShares = vault.deposit(firstDeposit, alice);
+        valueToken.mint(address(vault), valueDeposit);
+
+        vm.prank(alice);
+        uint256 redeemed = vault.redeemValue(firstShares, alice, alice);
+
+        assertEq(redeemed, valueDeposit);
+        assertEq(vault.totalSupply(), 0);
+        assertEq(vault.totalAssets(), 0);
+        assertEq(depositToken.totalSupply(), deepSupplyBefore - firstDeposit);
+
+        vm.prank(bob);
+        uint256 nextShares = vault.deposit(nextDeposit, bob);
+
+        assertEq(nextShares, nextDeposit);
+        assertEq(vault.totalSupply(), nextDeposit);
+        assertEq(vault.totalAssets(), nextDeposit);
+        assertEq(depositToken.totalSupply(), deepSupplyBefore - firstDeposit - nextDeposit);
     }
 
     function testFuzzRedeemAssetsAccounting(
