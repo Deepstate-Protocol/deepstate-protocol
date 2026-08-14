@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IGovernor} from "@openzeppelin/contracts/governance/IGovernor.sol";
 import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
 
@@ -10,7 +11,6 @@ import {DeepstateGovernor} from "../src/DeepstateGovernor.sol";
 import {DeepstateToken} from "../src/DeepstateToken.sol";
 import {DeepstateVault} from "../src/DeepstateVault.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
-import {MockWETH} from "./mocks/MockWETH.sol";
 
 contract BlockClockVotes {
     function clock() external view returns (uint48) {
@@ -53,12 +53,11 @@ contract DeepstateGovernanceTest is Test {
     address internal deployer = makeAddr("deployer");
     address internal alice = makeAddr("alice");
     address internal bob = makeAddr("bob");
-    address internal newAuction = makeAddr("newAuction");
+    address internal newVaultOwner = makeAddr("newVaultOwner");
     address internal newMinter = makeAddr("newMinter");
 
     DeepstateToken internal deepstate;
     MockERC20 internal valueToken;
-    MockWETH internal wrappedNative;
     DeepstateVault internal vault;
     DeepstateGovernor internal governor;
     uint48 internal governanceDeployedAt;
@@ -67,11 +66,8 @@ contract DeepstateGovernanceTest is Test {
         vm.startPrank(deployer);
 
         deepstate = new DeepstateToken(deployer, "Deepstate", "DEEP");
-        valueToken = new MockERC20("USD Coin", "USDC", 6);
-        wrappedNative = new MockWETH();
-        vault = new DeepstateVault(
-            deployer, address(deepstate), address(valueToken), address(wrappedNative), "Deepstate Governance", "STATE"
-        );
+        valueToken = new MockERC20("USDG", "USDG", 6);
+        vault = new DeepstateVault(deployer, address(deepstate), address(valueToken), "Deepstate Governance", "STATE");
         governanceDeployedAt = uint48(block.timestamp);
         governor = new DeepstateGovernor(
             IVotes(address(vault)),
@@ -159,7 +155,7 @@ contract DeepstateGovernanceTest is Test {
 
     function testProposalCreationIsBlockedUntilExactGovernanceStart() public {
         (address[] memory targets, uint256[] memory values, bytes[] memory calldatas, string memory description) =
-            _proposal(address(vault), abi.encodeCall(DeepstateVault.setAuction, (newAuction)), "bootstrap boundary");
+            _proposal(address(vault), abi.encodeCall(Ownable.transferOwnership, (newVaultOwner)), "bootstrap boundary");
 
         uint48 start = governor.governanceStart();
         vm.warp(start - 1);
@@ -186,7 +182,7 @@ contract DeepstateGovernanceTest is Test {
         assertEq(governor.proposalThreshold(), 1.005e18);
 
         (address[] memory targets, uint256[] memory values, bytes[] memory calldatas, string memory description) =
-            _proposal(address(vault), abi.encodeCall(DeepstateVault.setAuction, (newAuction)), "below one percent");
+            _proposal(address(vault), abi.encodeCall(Ownable.transferOwnership, (newVaultOwner)), "below one percent");
 
         vm.prank(bob);
         vm.expectRevert(
@@ -243,12 +239,11 @@ contract DeepstateGovernanceTest is Test {
         uint256[] memory values = new uint256[](1);
 
         bytes[] memory calldatas = new bytes[](1);
-        calldatas[0] = abi.encodeCall(DeepstateVault.setAuction, (newAuction));
+        calldatas[0] = abi.encodeCall(Ownable.transferOwnership, (newVaultOwner));
 
-        _passProposal(targets, values, calldatas, "set vault auction");
+        _passProposal(targets, values, calldatas, "transfer vault ownership");
 
-        assertEq(vault.owner(), address(governor));
-        assertEq(vault.auction(), newAuction);
+        assertEq(vault.owner(), newVaultOwner);
     }
 
     function testGovernorControlsDeepstateMinter() public {
@@ -279,7 +274,7 @@ contract DeepstateGovernanceTest is Test {
 
     function testPostSnapshotDepositDoesNotAddVotesToActiveProposal() public {
         (address[] memory targets, uint256[] memory values, bytes[] memory calldatas, string memory description) =
-            _proposal(address(vault), abi.encodeCall(DeepstateVault.setAuction, (newAuction)), "snapshot deposit");
+            _proposal(address(vault), abi.encodeCall(Ownable.transferOwnership, (newVaultOwner)), "snapshot deposit");
 
         _startGovernance();
         vm.warp(vm.getBlockTimestamp() + 1);
@@ -309,7 +304,7 @@ contract DeepstateGovernanceTest is Test {
 
     function testPostSnapshotTransferDoesNotRemoveVotingPowerForActiveProposal() public {
         (address[] memory targets, uint256[] memory values, bytes[] memory calldatas, string memory description) =
-            _proposal(address(vault), abi.encodeCall(DeepstateVault.setAuction, (newAuction)), "snapshot transfer");
+            _proposal(address(vault), abi.encodeCall(Ownable.transferOwnership, (newVaultOwner)), "snapshot transfer");
 
         _startGovernance();
         vm.warp(vm.getBlockTimestamp() + 1);
@@ -334,7 +329,7 @@ contract DeepstateGovernanceTest is Test {
 
     function testPostSnapshotDelegationDoesNotAddVotingPowerForActiveProposal() public {
         (address[] memory targets, uint256[] memory values, bytes[] memory calldatas, string memory description) =
-            _proposal(address(vault), abi.encodeCall(DeepstateVault.setAuction, (newAuction)), "snapshot delegation");
+            _proposal(address(vault), abi.encodeCall(Ownable.transferOwnership, (newVaultOwner)), "snapshot delegation");
 
         vm.prank(bob);
         vault.delegate(alice);
@@ -369,7 +364,7 @@ contract DeepstateGovernanceTest is Test {
 
     function testLateQuorumExtensionUsesTimestampSeconds() public {
         (address[] memory targets, uint256[] memory values, bytes[] memory calldatas, string memory description) =
-            _proposal(address(vault), abi.encodeCall(DeepstateVault.setAuction, (newAuction)), "late quorum");
+            _proposal(address(vault), abi.encodeCall(Ownable.transferOwnership, (newVaultOwner)), "late quorum");
 
         _startGovernance();
         vm.warp(vm.getBlockTimestamp() + 1);

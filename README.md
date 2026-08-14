@@ -1,8 +1,8 @@
 # Deepstate Vault
 
-Foundry project for an OpenZeppelin ERC-4626/ERC20Votes share vault with an
-Euler Fee Flow-style Dutch auction for converting miscellaneous fee assets into
-a single value token.
+Foundry project for an OpenZeppelin ERC-4626/ERC20Votes share vault with a
+permissionless fixed-price path for converting miscellaneous fee assets into
+USDG.
 
 ## Contracts
 
@@ -10,13 +10,13 @@ a single value token.
   a burnable deposit token. Deposited tokens are transferred in, burned, and
   recorded as `totalBurnedDepositAssets`.
 - `redeemValue`: burns shares for the holder's pro-rata amount of the value
-  token, such as USDC.
+  token, USDG.
 - `redeemAssets`: burns shares for the holder's pro-rata amount of each
   explicitly listed ERC-20 balance and raw ETH balance. Raw ETH is represented
   by `address(0)`; DEEP, STATE, and duplicate entries are rejected.
-- `FeeFlowController`: imported from Euler Labs' Fee Flow git dependency.
-  Buyers pay the value token to the vault and receive the controller's full
-  balances of selected ERC-20 fee assets.
+- `buyFees`: lets anyone pay exactly 10,000 USDG directly to the vault for its
+  complete balances of explicitly listed fee assets. Raw ETH is represented by
+  `address(0)`; DEEP, STATE, USDG, and duplicate entries are rejected.
 
 ## ERC-4626 Note
 
@@ -91,16 +91,23 @@ registers active orders lazily when necessary, and registered orders can claim
 their final accrual after cancellation without wallet-level transaction batching.
 An order deleted before either registration path permanently loses its claim.
 
-## Auction Flow
+## Fee Purchase Flow
 
 1. Market fees or miscellaneous tokens land in the vault.
-2. The owner calls `sweepToAuction` and/or `sweepNativeToAuction`.
-   Raw ETH is wrapped to WETH before being sent to Euler Fee Flow because the
-   controller auctions ERC-20 balances.
-3. A buyer calls `buy` on `FeeFlowController`, paying the current Dutch auction
-   price in the value token to the vault.
-4. The buyer receives the listed auctioned assets, and the new value token
-   balance becomes redeemable pro-rata by vault share holders.
+2. A buyer submits the fee-token addresses, minimum acceptable vault balances,
+   and a receiver to `buyFees`. The caller-supplied list is necessary because
+   ERC-20 balances are not enumerable on-chain.
+3. The vault snapshots each listed balance, rejects protected or duplicate
+   entries, and collects exactly 10,000 USDG from the buyer. Fee-on-transfer
+   USDG payments are rejected.
+4. The receiver gets each listed asset's complete snapshotted balance. Unlisted
+   assets remain in the vault, and the USDG payment becomes redeemable pro-rata
+   by STATE holders.
+
+The minimum amounts protect a buyer from a prior purchase or STATE redemption
+reducing the quoted balances before execution. Native ETH uses `address(0)`.
+There is no auction timer, privileged sweep, wrapped-native conversion, or
+separate custody contract.
 
 ## Commands
 
@@ -112,11 +119,10 @@ forge test
 ## Deployment
 
 `script/DeployDeepstate.s.sol` deploys the core stack and both rewarders,
-configures the vault's Fee Flow auction, enables both pool hooks, grants the
-Governor `DeepstateToken`'s default admin role, and transfers ownership of the
-vault, both rewarders, and `DeepstateV1` to `DeepstateGovernor`. Both rewarders
-receive `MINTER_ROLE`; an optional additional minter may be configured for a
-separate emissions path.
+enables both pool hooks, grants the Governor `DeepstateToken`'s default admin
+role, and transfers ownership of the vault, both rewarders, and `DeepstateV1`
+to `DeepstateGovernor`. Both rewarders receive `MINTER_ROLE`; an optional
+additional minter may be configured for a separate emissions path.
 
 Required environment variables:
 
@@ -126,13 +132,11 @@ export VALUE_TOKEN=0x... # USDG, required to report 6 decimals
 export NVDA_TOKEN=0x...  # NVDA, required to report 18 decimals
 ```
 
-Optional environment variables include `ROUTER_FEE_BPS` (10 bps by default), `DEEP_MINTER`,
-`WRAPPED_NATIVE`, the `FEE_FLOW_*` auction parameters, and the `GOVERNOR_*`
-governance parameters. The launch parameters are
+Optional environment variables include `ROUTER_FEE_BPS` (10 bps by default),
+`DEEP_MINTER`, and the `GOVERNOR_*` governance parameters. The launch parameters are
 `GOVERNOR_START_DELAY`, `GOVERNOR_VOTING_DELAY`,
 `GOVERNOR_VOTING_PERIOD`, `GOVERNOR_PROPOSAL_THRESHOLD_NUMERATOR`,
-`GOVERNOR_QUORUM_NUMERATOR`, and `GOVERNOR_VOTE_EXTENSION`. Set
-`WRAPPED_NATIVE` to WETH on networks where native sweeping should be enabled.
+`GOVERNOR_QUORUM_NUMERATOR`, and `GOVERNOR_VOTE_EXTENSION`.
 
 ```bash
 forge script script/DeployDeepstate.s.sol:DeployDeepstate \

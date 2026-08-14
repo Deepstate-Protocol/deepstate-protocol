@@ -4,9 +4,6 @@
 [submodule "lib/solady"]
 	path = lib/solady
 	url = https://github.com/Vectorized/solady
-[submodule "lib/fee-flow"]
-	path = lib/fee-flow
-	url = https://github.com/euler-xyz/fee-flow
 [submodule "lib/deepstate-contracts"]
 	path = lib/deepstate-contracts
 	url = git@github.com:Deepstate-Protocol/deepstate-contracts.git
