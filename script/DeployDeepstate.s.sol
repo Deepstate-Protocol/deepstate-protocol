@@ -29,6 +29,8 @@ contract DeployDeepstate is Script {
     uint48 internal constant MAX_VOTE_EXTENSION = 7 days;
     uint256 internal constant GOVERNANCE_PERCENT_DENOMINATOR = 100;
     uint32 internal constant MIN_EMISSION_DURATION = 30 days;
+    address internal constant DEAD_ADDRESS = address(0xdead);
+    uint256 internal constant PERMANENT_STATE_SEED = 1e18;
     uint256 private constant _ROUTER_POOL_CONFIG_MAPPING_SLOT = 2;
     uint256 private constant _ROUTER_TOKEN0_HOOK_FLAG = uint256(1) << 254;
     uint256 private constant _ROUTER_TOKEN1_HOOK_FLAG = uint256(1) << 255;
@@ -219,6 +221,10 @@ contract DeployDeepstate is Script {
         address deployer = config.environment.expectedDeployer;
 
         token.grantRole(minterRole, deployer);
+        token.mint(deployer, PERMANENT_STATE_SEED);
+        token.approve(address(deployment.stateVault), PERMANENT_STATE_SEED);
+        deployment.stateVault.deposit(PERMANENT_STATE_SEED, deployer, PERMANENT_STATE_SEED);
+        deployment.stateVault.transfer(DEAD_ADDRESS, PERMANENT_STATE_SEED);
         token.mint(address(deployment.marketRewarder), config.rewarder.initialFunding);
         token.revokeRole(minterRole, deployer);
 
@@ -354,8 +360,13 @@ contract DeployDeepstate is Script {
         _verify(vault.asset() == address(token), "DeepstateVault.asset");
         _verify(vault.depositToken() == address(token), "DeepstateVault.depositToken");
         _verify(vault.valueToken() == config.externalTokens.valueToken, "DeepstateVault.valueToken");
-        _verify(vault.totalSupply() == 0, "DeepstateVault.initialSupply");
-        _verify(vault.totalBurnedDepositAssets() == 0, "DeepstateVault.initialBurnedAssets");
+        _verify(vault.totalSupply() == PERMANENT_STATE_SEED, "DeepstateVault.initialSupply");
+        _verify(vault.totalBurnedDepositAssets() == PERMANENT_STATE_SEED, "DeepstateVault.initialBurnedAssets");
+        _verify(vault.balanceOf(DEAD_ADDRESS) == PERMANENT_STATE_SEED, "DeepstateVault.permanentSeed");
+        _verify(vault.delegates(DEAD_ADDRESS) == address(0), "DeepstateVault.permanentSeedDelegate");
+        _verify(vault.getVotes(DEAD_ADDRESS) == 0, "DeepstateVault.permanentSeedVotes");
+        _verify(vault.balanceOf(config.environment.expectedDeployer) == 0, "DeepstateVault.deployerBalance");
+        _verify(token.balanceOf(address(vault)) == 0, "DeepstateVault.depositTokenBurned");
         _verify(_same(vault.CLOCK_MODE(), "mode=timestamp"), "DeepstateVault.clockMode");
     }
 

@@ -31,11 +31,17 @@ therefore enumerate every balance the holder intends to claim. `maxWithdraw`
 and `maxRedeem` return zero; `maxRedeemValue` reports the separate value-token
 redemption capacity.
 
-When the final STATE share is burned, the vault resets
-`totalBurnedDepositAssets` to zero and the next deposit begins a fresh 1:1
-DEEP-to-STATE accounting epoch. This reset never restores DEEP; every deposited
-DEEP remains permanently burned. Any fee asset omitted by the final redeemer
-stays in the vault and becomes available to STATE holders in the next epoch.
+The canonical deployment permanently locks 1 STATE at `address(0xdead)`, so its
+total supply can never reach zero. The seed is created by depositing 1 DEEP,
+which is literally burned; the resulting dead share is undelegated and carries
+no voting power. It prevents dust-sized fresh accounting epochs and retains a
+diminishing, permanently unclaimable pro-rata interest in vault assets.
+
+The vault contract still resets `totalBurnedDepositAssets` when its supply
+reaches zero so direct or noncanonical deployments can recover from an empty
+epoch. That reset never restores DEEP; every deposited DEEP remains permanently
+burned. Any fee asset omitted by a final redeemer stays in the vault and becomes
+available to STATE holders in the next epoch.
 
 ## Governance Clock
 

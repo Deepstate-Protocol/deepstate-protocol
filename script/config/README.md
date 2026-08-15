@@ -37,6 +37,10 @@ reviewed configuration separately from the private key.
 - `vault.name` and `vault.symbol` configure the 18-decimal ERC-4626 and ERC20Votes
   share token. The deposit asset is the newly deployed DEEP token and the value
   asset is `externalTokens.valueToken`.
+- Deployment mints and deposits 1 DEEP, permanently sends the resulting 1 STATE
+  to `address(0xdead)`, and verifies the dead share has no voting power. The seed
+  DEEP is burned, so it does not increase the post-deployment DEEP supply or the
+  fixed rewarder allocation.
 
 ## Router
 

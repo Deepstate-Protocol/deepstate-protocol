@@ -96,6 +96,13 @@ contract DeployDeepstateTest is DeployDeepstate, Test {
         assertEq(deployment.stateVault.symbol(), "STATE-P");
         assertEq(deployment.deepstateToken.totalSupply(), REWARD_FUNDING);
         assertEq(deployment.deepstateToken.balanceOf(address(deployment.marketRewarder)), REWARD_FUNDING);
+        assertEq(deployment.deepstateToken.balanceOf(address(deployment.stateVault)), 0);
+        assertEq(deployment.stateVault.totalSupply(), PERMANENT_STATE_SEED);
+        assertEq(deployment.stateVault.totalBurnedDepositAssets(), PERMANENT_STATE_SEED);
+        assertEq(deployment.stateVault.balanceOf(DEAD_ADDRESS), PERMANENT_STATE_SEED);
+        assertEq(deployment.stateVault.balanceOf(address(this)), 0);
+        assertEq(deployment.stateVault.delegates(DEAD_ADDRESS), address(0));
+        assertEq(deployment.stateVault.getVotes(DEAD_ADDRESS), 0);
         assertTrue(deployment.deepstateToken.hasRole(adminRole, governor));
         assertFalse(deployment.deepstateToken.hasRole(adminRole, address(this)));
         assertEq(deployment.deepstateToken.defaultAdminCount(), 1);
