@@ -271,6 +271,44 @@ contract DeepstateVaultTest is Test {
         assertEq(vault.getVotes(bob), 40e18);
     }
 
+    function testNonzeroStateCannotBeTransferredOrMintedToVault() public {
+        vm.prank(alice);
+        vault.deposit(100e18, alice);
+
+        vm.prank(alice);
+        vm.expectRevert(DeepstateVault.ProtectedToken.selector);
+        vault.transfer(address(vault), 1);
+
+        vm.prank(alice);
+        vault.approve(carol, 1);
+        vm.prank(carol);
+        vm.expectRevert(DeepstateVault.ProtectedToken.selector);
+        vault.transferFrom(alice, address(vault), 1);
+
+        uint256 bobAssetsBefore = depositToken.balanceOf(bob);
+        vm.prank(bob);
+        vm.expectRevert(DeepstateVault.ProtectedToken.selector);
+        vault.deposit(1e18, address(vault));
+
+        assertEq(vault.balanceOf(address(vault)), 0);
+        assertEq(vault.balanceOf(alice), 100e18);
+        assertEq(vault.totalSupply(), 100e18);
+        assertEq(vault.totalBurnedDepositAssets(), 100e18);
+        assertEq(vault.allowance(alice, carol), 1);
+        assertEq(depositToken.balanceOf(bob), bobAssetsBefore);
+    }
+
+    function testZeroStateTransferToVaultRemainsPermitted() public {
+        vm.prank(alice);
+        vault.deposit(100e18, alice);
+
+        vm.prank(alice);
+        assertTrue(vault.transfer(address(vault), 0));
+
+        assertEq(vault.balanceOf(address(vault)), 0);
+        assertEq(vault.balanceOf(alice), 100e18);
+    }
+
     function testTransferUpdatesVotesBetweenDelegatedAccounts() public {
         vm.prank(alice);
         vault.deposit(100e18, alice);

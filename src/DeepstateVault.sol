@@ -308,6 +308,8 @@ contract DeepstateVault is ERC4626, ERC20Votes, Ownable, ReentrancyGuard {
     }
 
     function _update(address from, address to, uint256 value) internal override(ERC20, ERC20Votes) {
+        if (to == address(this) && value != 0) revert ProtectedToken();
+
         super._update(from, to, value);
 
         if (to == address(0) && totalSupply() == 0) {
