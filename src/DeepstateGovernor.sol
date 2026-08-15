@@ -61,6 +61,9 @@ contract DeepstateGovernor is
         GovernorVotesQuorumFraction(quorumNumeratorValue)
         GovernorPreventLateQuorum(initialVoteExtension)
     {
+        if (quorumNumeratorValue == 0) {
+            revert GovernorInvalidQuorumFraction(quorumNumeratorValue, quorumDenominator());
+        }
         if (!_usesTimestampClock(IERC5805(address(stateToken)))) {
             revert TimestampClockRequired();
         }
@@ -145,6 +148,13 @@ contract DeepstateGovernor is
         return Math.max(super.quorum(timepoint), MINIMUM_QUORUM);
     }
 
+    function _updateQuorumNumerator(uint256 newQuorumNumerator) internal override {
+        if (newQuorumNumerator == 0) {
+            revert GovernorInvalidQuorumFraction(newQuorumNumerator, quorumDenominator());
+        }
+        super._updateQuorumNumerator(newQuorumNumerator);
+    }
+
     function proposalDeadline(uint256 proposalId)
         public
         view
@@ -185,7 +195,7 @@ contract DeepstateGovernor is
 
     function _updateProposalThresholdNumerator(uint256 newNumerator) internal {
         uint256 denominator = PROPOSAL_THRESHOLD_DENOMINATOR;
-        if (newNumerator > denominator) {
+        if (newNumerator == 0 || newNumerator > denominator) {
             revert InvalidProposalThresholdFraction(newNumerator, denominator);
         }
 

@@ -5,6 +5,9 @@ import {Test} from "forge-std/Test.sol";
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IGovernor} from "@openzeppelin/contracts/governance/IGovernor.sol";
+import {
+    GovernorVotesQuorumFraction
+} from "@openzeppelin/contracts/governance/extensions/GovernorVotesQuorumFraction.sol";
 import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
 
 import {DeepstateGovernor} from "../src/DeepstateGovernor.sol";
@@ -434,6 +437,60 @@ contract DeepstateGovernanceTest is Test {
         vm.prank(address(governor));
         vm.expectRevert(DeepstateGovernor.AbsoluteProposalThresholdUnsupported.selector);
         governor.setProposalThreshold(1e18);
+    }
+
+    function testGovernanceFractionsCannotBeZeroAtDeploymentOrUpdates() public {
+        uint256 proposalDenominator = governor.PROPOSAL_THRESHOLD_DENOMINATOR();
+        uint256 quorumDenominator = governor.quorumDenominator();
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeepstateGovernor.InvalidProposalThresholdFraction.selector, uint256(0), proposalDenominator
+            )
+        );
+        new DeepstateGovernor(
+            IVotes(address(vault)),
+            GOVERNANCE_START_DELAY,
+            VOTING_DELAY,
+            VOTING_PERIOD,
+            0,
+            QUORUM_NUMERATOR,
+            VOTE_EXTENSION
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                GovernorVotesQuorumFraction.GovernorInvalidQuorumFraction.selector, uint256(0), quorumDenominator
+            )
+        );
+        new DeepstateGovernor(
+            IVotes(address(vault)),
+            GOVERNANCE_START_DELAY,
+            VOTING_DELAY,
+            VOTING_PERIOD,
+            PROPOSAL_THRESHOLD_NUMERATOR,
+            0,
+            VOTE_EXTENSION
+        );
+
+        vm.prank(address(governor));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeepstateGovernor.InvalidProposalThresholdFraction.selector, uint256(0), proposalDenominator
+            )
+        );
+        governor.updateProposalThresholdNumerator(0);
+
+        vm.prank(address(governor));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                GovernorVotesQuorumFraction.GovernorInvalidQuorumFraction.selector, uint256(0), quorumDenominator
+            )
+        );
+        governor.updateQuorumNumerator(0);
+
+        assertEq(governor.proposalThresholdNumerator(), PROPOSAL_THRESHOLD_NUMERATOR);
+        assertEq(governor.quorumNumerator(), QUORUM_NUMERATOR);
     }
 
     function testVaultSharesBackGovernorOwnershipOfVault() public {
