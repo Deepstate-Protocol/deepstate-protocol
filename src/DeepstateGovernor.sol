@@ -25,6 +25,7 @@ contract DeepstateGovernor is
 {
     bytes32 private constant _TIMESTAMP_MODE_HASH = keccak256("mode=timestamp");
     uint256 public constant PROPOSAL_THRESHOLD_DENOMINATOR = 100;
+    uint48 public constant MIN_VOTING_DELAY = 1 days;
     uint48 public constant MAX_VOTING_DELAY = 30 days;
     uint48 public constant MAX_LATE_QUORUM_VOTE_EXTENSION = 7 days;
     uint32 public constant MAX_VOTING_PERIOD = 30 days;
@@ -38,6 +39,7 @@ contract DeepstateGovernor is
 
     error TimestampClockRequired();
     error GovernanceNotStarted(uint48 currentTimepoint, uint48 governanceStart);
+    error VotingDelayBelowMinimum(uint48 votingDelay, uint48 minimum);
     error VotingDelayAboveMaximum(uint48 votingDelay, uint48 maximum);
     error LateQuorumVoteExtensionAboveMaximum(uint48 voteExtension, uint48 maximum);
     error VotingPeriodAboveMaximum(uint32 votingPeriod, uint32 maximum);
@@ -62,6 +64,7 @@ contract DeepstateGovernor is
         if (!_usesTimestampClock(IERC5805(address(stateToken)))) {
             revert TimestampClockRequired();
         }
+        _validateVotingDelayMinimum(initialVotingDelay);
         _validateVotingDelayMaximum(initialVotingDelay);
         _validateLateQuorumVoteExtension(initialVoteExtension);
         _validateVotingPeriod(initialVotingPeriod);
@@ -89,6 +92,7 @@ contract DeepstateGovernor is
     }
 
     function setVotingDelay(uint48 newVotingDelay) public override onlyGovernance {
+        _validateVotingDelayMinimum(newVotingDelay);
         _validateVotingDelayMaximum(newVotingDelay);
         _setVotingDelay(newVotingDelay);
     }
@@ -162,6 +166,11 @@ contract DeepstateGovernor is
     function _validateVotingDelayMaximum(uint48 votingDelay_) private pure {
         uint48 maximum = MAX_VOTING_DELAY;
         if (votingDelay_ > maximum) revert VotingDelayAboveMaximum(votingDelay_, maximum);
+    }
+
+    function _validateVotingDelayMinimum(uint48 votingDelay_) private pure {
+        uint48 minimum = MIN_VOTING_DELAY;
+        if (votingDelay_ < minimum) revert VotingDelayBelowMinimum(votingDelay_, minimum);
     }
 
     function _validateLateQuorumVoteExtension(uint48 voteExtension) private pure {
