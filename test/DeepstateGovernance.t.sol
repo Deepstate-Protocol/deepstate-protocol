@@ -148,9 +148,31 @@ contract DeepstateGovernanceTest is Test {
         assertEq(governor.quorum(snapshot), 10e18);
     }
 
-    function testProposalThresholdIsZeroAtClockOrigin() public {
+    function testProposalThresholdIsOneAtClockOrigin() public {
         vm.warp(0);
-        assertEq(governor.proposalThreshold(), 0);
+        assertEq(governor.proposalThreshold(), 1);
+    }
+
+    function testZeroSupplyEpochStillRequiresOnePastVoteToPropose() public {
+        _startGovernance();
+
+        valueToken.mint(address(vault), 1e6);
+        uint256 shares = vault.balanceOf(alice);
+        vm.prank(alice);
+        vault.redeemValue(shares, alice, alice);
+        vm.warp(vm.getBlockTimestamp() + 1);
+
+        assertEq(vault.totalSupply(), 0);
+        assertEq(governor.proposalThreshold(), 1);
+
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas, string memory description) =
+            _proposal(address(vault), abi.encodeCall(Ownable.transferOwnership, (newVaultOwner)), "zero supply");
+
+        vm.prank(bob);
+        vm.expectRevert(
+            abi.encodeWithSelector(IGovernor.GovernorInsufficientProposerVotes.selector, bob, uint256(0), uint256(1))
+        );
+        governor.propose(targets, values, calldatas, description);
     }
 
     function testProposalCreationIsBlockedUntilExactGovernanceStart() public {

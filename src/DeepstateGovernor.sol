@@ -83,15 +83,14 @@ contract DeepstateGovernor is
     }
 
     function proposalThreshold() public view override(Governor, GovernorSettings) returns (uint256) {
+        uint256 numerator = _proposalThresholdNumerator;
         uint48 currentTimepoint = clock();
-        if (currentTimepoint == 0) return 0;
+        if (currentTimepoint == 0) return numerator == 0 ? 0 : 1;
 
-        return Math.mulDiv(
-            token().getPastTotalSupply(currentTimepoint - 1),
-            _proposalThresholdNumerator,
-            PROPOSAL_THRESHOLD_DENOMINATOR,
-            Math.Rounding.Ceil
-        );
+        uint256 pastTotalSupply = token().getPastTotalSupply(currentTimepoint - 1);
+        if (pastTotalSupply == 0 && numerator != 0) return 1;
+
+        return Math.mulDiv(pastTotalSupply, numerator, PROPOSAL_THRESHOLD_DENOMINATOR, Math.Rounding.Ceil);
     }
 
     function proposalThresholdNumerator() public view returns (uint256) {
