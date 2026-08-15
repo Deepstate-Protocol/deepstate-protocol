@@ -59,7 +59,8 @@ contract ReenteringNativeReceiver {
 
         address[] memory tokens = new address[](1);
         tokens[0] = reentryToken;
-        try vault.redeemAssets(reentryShares, address(this), address(this), tokens) {
+        uint256[] memory minimumAmounts = new uint256[](1);
+        try vault.redeemAssets(reentryShares, address(this), address(this), tokens, minimumAmounts) {
             reentered = true;
         } catch {}
     }
@@ -675,10 +676,14 @@ contract DeepstateVaultTest is Test {
         tokens[0] = address(valueToken);
         tokens[1] = address(feeToken);
         tokens[2] = address(0);
+        uint256[] memory minimumAmounts = new uint256[](3);
+        minimumAmounts[0] = 250e6;
+        minimumAmounts[1] = 2.5e18;
+        minimumAmounts[2] = 0.5 ether;
 
         uint256 aliceNativeBefore = alice.balance;
         vm.prank(alice);
-        uint256[] memory assets = vault.redeemAssets(50e18, alice, alice, tokens);
+        uint256[] memory assets = vault.redeemAssets(50e18, alice, alice, tokens, minimumAmounts);
 
         assertEq(assets.length, 3);
         assertEq(assets[0], 250e6);
@@ -695,6 +700,55 @@ contract DeepstateVaultTest is Test {
         assertEq(vault.getVotes(alice), 50e18);
     }
 
+    function testLegacyRedeemAssetsRequiresMinimumAmounts() public {
+        address[] memory tokens = new address[](1);
+        tokens[0] = address(valueToken);
+
+        vm.expectRevert(DeepstateVault.MinimumAmountsRequired.selector);
+        vault.redeemAssets(1e18, alice, alice, tokens);
+    }
+
+    function testRedeemAssetsMinimumsRejectDegradedBasketBeforeAllowanceOrBurn() public {
+        vm.prank(alice);
+        vault.deposit(100e18, alice);
+        vm.prank(bob);
+        vault.deposit(100e18, bob);
+
+        feeToken.mint(address(vault), 10e18);
+        otherFeeToken.mint(address(vault), 20e8);
+
+        uint256 shares = 50e18;
+        address[] memory tokens = new address[](2);
+        tokens[0] = address(feeToken);
+        tokens[1] = address(otherFeeToken);
+        uint256[] memory minimumAmounts = new uint256[](2);
+        minimumAmounts[0] = 2.5e18;
+        minimumAmounts[1] = 5e8;
+
+        address[] memory purchaseTokens = new address[](1);
+        purchaseTokens[0] = address(feeToken);
+        uint256[] memory purchaseMinimums = new uint256[](1);
+        purchaseMinimums[0] = 10e18;
+        vm.prank(buyer);
+        vault.buyFees(purchaseTokens, purchaseMinimums, buyer);
+
+        vm.prank(alice);
+        vault.approve(carol, shares);
+        vm.prank(carol);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeepstateVault.MinimumAssetAmountNotMet.selector, address(feeToken), uint256(0), minimumAmounts[0]
+            )
+        );
+        vault.redeemAssets(shares, alice, alice, tokens, minimumAmounts);
+
+        assertEq(vault.allowance(alice, carol), shares);
+        assertEq(vault.balanceOf(alice), 100e18);
+        assertEq(vault.totalSupply(), 200e18);
+        assertEq(otherFeeToken.balanceOf(address(vault)), 20e8);
+        assertEq(otherFeeToken.balanceOf(alice), 0);
+    }
+
     function testFinalMultiAssetRedemptionResetsDepositAccounting() public {
         vm.prank(alice);
         vault.deposit(100e18, alice);
@@ -704,7 +758,7 @@ contract DeepstateVaultTest is Test {
         tokens[0] = address(feeToken);
 
         vm.prank(alice);
-        uint256[] memory assets = vault.redeemAssets(100e18, alice, alice, tokens);
+        uint256[] memory assets = vault.redeemAssets(100e18, alice, alice, tokens, _zeroMinimums(tokens));
 
         assertEq(assets[0], 10e18);
         assertEq(feeToken.balanceOf(alice), 10e18);
@@ -726,7 +780,7 @@ contract DeepstateVaultTest is Test {
         tokens[1] = address(feeToken);
 
         vm.prank(alice);
-        uint256[] memory assets = vault.redeemAssets(50e18, alice, alice, tokens);
+        uint256[] memory assets = vault.redeemAssets(50e18, alice, alice, tokens, _zeroMinimums(tokens));
 
         assertEq(assets[0], 250e6);
         assertEq(assets[1], 0);
@@ -748,7 +802,7 @@ contract DeepstateVaultTest is Test {
         tokens[1] = address(feeToken);
 
         vm.prank(bob);
-        uint256[] memory assets = vault.redeemAssets(40e18, carol, alice, tokens);
+        uint256[] memory assets = vault.redeemAssets(40e18, carol, alice, tokens, _zeroMinimums(tokens));
 
         assertEq(assets[0], 200e6);
         assertEq(assets[1], 10e18);
@@ -773,7 +827,7 @@ contract DeepstateVaultTest is Test {
 
         vm.prank(alice);
         vm.expectRevert(DeepstateVault.DuplicateAsset.selector);
-        vault.redeemAssets(40e18, alice, alice, tokens);
+        vault.redeemAssets(40e18, alice, alice, tokens, _zeroMinimums(tokens));
 
         tokens = new address[](2);
         tokens[0] = address(0);
@@ -781,7 +835,7 @@ contract DeepstateVaultTest is Test {
 
         vm.prank(alice);
         vm.expectRevert(DeepstateVault.DuplicateAsset.selector);
-        vault.redeemAssets(40e18, alice, alice, tokens);
+        vault.redeemAssets(40e18, alice, alice, tokens, _zeroMinimums(tokens));
 
         assertEq(vault.balanceOf(alice), 100e18);
         assertEq(vault.totalSupply(), 100e18);
@@ -800,8 +854,8 @@ contract DeepstateVaultTest is Test {
         tokens[0] = address(valueToken);
 
         vm.startPrank(alice);
-        uint256[] memory first = vault.redeemAssets(25e18, alice, alice, tokens);
-        uint256[] memory second = vault.redeemAssets(25e18, alice, alice, tokens);
+        uint256[] memory first = vault.redeemAssets(25e18, alice, alice, tokens, _zeroMinimums(tokens));
+        uint256[] memory second = vault.redeemAssets(25e18, alice, alice, tokens, _zeroMinimums(tokens));
         vm.stopPrank();
 
         assertEq(first[0], 125e6);
@@ -819,37 +873,41 @@ contract DeepstateVaultTest is Test {
         tokens[0] = address(valueToken);
 
         vm.prank(alice);
+        vm.expectRevert(DeepstateVault.ArrayLengthMismatch.selector);
+        vault.redeemAssets(1e18, alice, alice, tokens, new uint256[](0));
+
+        vm.prank(alice);
         vm.expectRevert(DeepstateVault.ZeroShares.selector);
-        vault.redeemAssets(0, alice, alice, tokens);
+        vault.redeemAssets(0, alice, alice, tokens, _zeroMinimums(tokens));
 
         vm.prank(alice);
         vm.expectRevert(DeepstateVault.ZeroAddress.selector);
-        vault.redeemAssets(1e18, address(0), alice, tokens);
+        vault.redeemAssets(1e18, address(0), alice, tokens, _zeroMinimums(tokens));
 
         vm.prank(alice);
         vm.expectRevert();
-        vault.redeemAssets(101e18, alice, alice, tokens);
+        vault.redeemAssets(101e18, alice, alice, tokens, _zeroMinimums(tokens));
 
         tokens = new address[](0);
         vm.prank(alice);
         vm.expectRevert(DeepstateVault.EmptyAssetList.selector);
-        vault.redeemAssets(1e18, alice, alice, tokens);
+        vault.redeemAssets(1e18, alice, alice, tokens, _zeroMinimums(tokens));
 
         tokens = new address[](1);
         tokens[0] = address(feeToken);
         vm.prank(alice);
         vm.expectRevert(DeepstateVault.InsufficientRedeemableAssets.selector);
-        vault.redeemAssets(1e18, alice, alice, tokens);
+        vault.redeemAssets(1e18, alice, alice, tokens, _zeroMinimums(tokens));
 
         tokens[0] = address(depositToken);
         vm.prank(alice);
         vm.expectRevert(DeepstateVault.ProtectedToken.selector);
-        vault.redeemAssets(1e18, alice, alice, tokens);
+        vault.redeemAssets(1e18, alice, alice, tokens, _zeroMinimums(tokens));
 
         tokens[0] = address(vault);
         vm.prank(alice);
         vm.expectRevert(DeepstateVault.ProtectedToken.selector);
-        vault.redeemAssets(1e18, alice, alice, tokens);
+        vault.redeemAssets(1e18, alice, alice, tokens, _zeroMinimums(tokens));
 
         assertEq(vault.balanceOf(alice), 100e18);
         assertEq(vault.totalSupply(), 100e18);
@@ -868,7 +926,7 @@ contract DeepstateVaultTest is Test {
 
         vm.prank(alice);
         vm.expectRevert();
-        vault.redeemAssets(40e18, address(receiver), alice, tokens);
+        vault.redeemAssets(40e18, address(receiver), alice, tokens, _zeroMinimums(tokens));
 
         assertEq(vault.balanceOf(alice), 100e18);
         assertEq(vault.totalSupply(), 100e18);
@@ -890,7 +948,8 @@ contract DeepstateVaultTest is Test {
         tokens[0] = address(0);
 
         vm.prank(address(receiver));
-        uint256[] memory assets = vault.redeemAssets(10e18, address(receiver), address(receiver), tokens);
+        uint256[] memory assets =
+            vault.redeemAssets(10e18, address(receiver), address(receiver), tokens, _zeroMinimums(tokens));
 
         assertEq(assets[0], 0.1 ether);
         assertTrue(receiver.attempted());
@@ -1225,7 +1284,7 @@ contract DeepstateVaultTest is Test {
         tokens[2] = address(0);
 
         vm.prank(alice);
-        uint256[] memory assets = vault.redeemAssets(sharesToRedeem, alice, alice, tokens);
+        uint256[] memory assets = vault.redeemAssets(sharesToRedeem, alice, alice, tokens, _zeroMinimums(tokens));
 
         assertEq(assets[0], expectedValue);
         assertEq(assets[1], expectedFee);
@@ -1290,5 +1349,9 @@ contract DeepstateVaultTest is Test {
                 address(vault)
             )
         );
+    }
+
+    function _zeroMinimums(address[] memory tokens) private pure returns (uint256[] memory) {
+        return new uint256[](tokens.length);
     }
 }

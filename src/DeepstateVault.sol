@@ -60,6 +60,7 @@ contract DeepstateVault is ERC4626, ERC20Votes, Ownable, ReentrancyGuard {
     error InsufficientRedeemableAssets();
     error InsufficientFeeAssets();
     error ArrayLengthMismatch();
+    error MinimumAmountsRequired();
     error MinimumAssetAmountNotMet(address token, uint256 amount, uint256 minimum);
     error InvalidFeePayment();
     error InvalidValueTokenDecimals(uint8 actualDecimals);
@@ -135,14 +136,21 @@ contract DeepstateVault is ERC4626, ERC20Votes, Ownable, ReentrancyGuard {
         emit ValueRedeemed(msg.sender, receiver, owner, shares, valueAssets);
     }
 
+    /// @notice Deprecated unsafe redemption interface. Use the overload with per-asset minimum amounts.
+    function redeemAssets(uint256, address, address, address[] calldata) external pure returns (uint256[] memory) {
+        revert MinimumAmountsRequired();
+    }
+
     /// @notice Burns STATE and pays a pro-rata share of each explicitly listed vault asset.
     /// @dev Use address(0) for native ETH. DEEP and STATE cannot be redeemed through this path.
     /// All payouts use pre-burn balances and supply; omitted assets remain in the vault.
-    function redeemAssets(uint256 shares, address receiver, address owner, address[] calldata tokens)
-        external
-        nonReentrant
-        returns (uint256[] memory assets)
-    {
+    function redeemAssets(
+        uint256 shares,
+        address receiver,
+        address owner,
+        address[] calldata tokens,
+        uint256[] calldata minimumAmounts
+    ) external nonReentrant returns (uint256[] memory assets) {
         if (shares == 0) revert ZeroShares();
         if (receiver == address(0)) revert ZeroAddress();
 
@@ -151,6 +159,7 @@ contract DeepstateVault is ERC4626, ERC20Votes, Ownable, ReentrancyGuard {
 
         uint256 length = tokens.length;
         if (length == 0) revert EmptyAssetList();
+        if (minimumAmounts.length != length) revert ArrayLengthMismatch();
 
         uint256 supply = totalSupply();
         uint256 marker = _nextAssetListCallMarker();
@@ -162,6 +171,9 @@ contract DeepstateVault is ERC4626, ERC20Votes, Ownable, ReentrancyGuard {
             _validateListedAsset(token, marker);
 
             uint256 amount = shares.mulDiv(_vaultBalance(token), supply);
+            uint256 minimum = minimumAmounts[i];
+            if (amount < minimum) revert MinimumAssetAmountNotMet(token, amount, minimum);
+
             assets[i] = amount;
             if (amount != 0) hasAssets = true;
         }
