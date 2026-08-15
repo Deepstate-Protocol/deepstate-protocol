@@ -25,6 +25,7 @@ contract DeployDeepstate is Script {
     uint48 internal constant MAX_VOTING_DELAY = 30 days;
     uint32 internal constant MIN_VOTING_PERIOD = 1 days;
     uint32 internal constant MAX_VOTING_PERIOD = 30 days;
+    uint48 internal constant MIN_VOTE_EXTENSION = 1 days;
     uint48 internal constant MAX_VOTE_EXTENSION = 7 days;
     uint256 internal constant GOVERNANCE_PERCENT_DENOMINATOR = 100;
     uint32 internal constant MIN_EMISSION_DURATION = 30 days;
@@ -309,7 +310,9 @@ contract DeployDeepstate is Script {
         if (governance.quorumNumerator == 0 || governance.quorumNumerator > GOVERNANCE_PERCENT_DENOMINATOR) {
             revert InvalidConfig("governance.quorumNumerator");
         }
-        if (governance.voteExtension > MAX_VOTE_EXTENSION) revert InvalidConfig("governance.voteExtension");
+        if (governance.voteExtension < MIN_VOTE_EXTENSION || governance.voteExtension > MAX_VOTE_EXTENSION) {
+            revert InvalidConfig("governance.voteExtension");
+        }
 
         RewarderConfig memory rewarder = config.rewarder;
         if (rewarder.sideEmissionCap == 0) revert InvalidConfig("rewarder.sideEmissionCap");

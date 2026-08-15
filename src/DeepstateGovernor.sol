@@ -27,6 +27,7 @@ contract DeepstateGovernor is
     uint256 public constant PROPOSAL_THRESHOLD_DENOMINATOR = 100;
     uint48 public constant MIN_VOTING_DELAY = 1 days;
     uint48 public constant MAX_VOTING_DELAY = 30 days;
+    uint48 public constant MIN_LATE_QUORUM_VOTE_EXTENSION = 1 days;
     uint48 public constant MAX_LATE_QUORUM_VOTE_EXTENSION = 7 days;
     uint32 public constant MIN_VOTING_PERIOD = 1 days;
     uint32 public constant MAX_VOTING_PERIOD = 30 days;
@@ -42,6 +43,7 @@ contract DeepstateGovernor is
     error GovernanceNotStarted(uint48 currentTimepoint, uint48 governanceStart);
     error VotingDelayBelowMinimum(uint48 votingDelay, uint48 minimum);
     error VotingDelayAboveMaximum(uint48 votingDelay, uint48 maximum);
+    error LateQuorumVoteExtensionBelowMinimum(uint48 voteExtension, uint48 minimum);
     error LateQuorumVoteExtensionAboveMaximum(uint48 voteExtension, uint48 maximum);
     error VotingPeriodBelowMinimum(uint32 votingPeriod, uint32 minimum);
     error VotingPeriodAboveMaximum(uint32 votingPeriod, uint32 maximum);
@@ -186,7 +188,9 @@ contract DeepstateGovernor is
     }
 
     function _validateLateQuorumVoteExtension(uint48 voteExtension) private pure {
+        uint48 minimum = MIN_LATE_QUORUM_VOTE_EXTENSION;
         uint48 maximum = MAX_LATE_QUORUM_VOTE_EXTENSION;
+        if (voteExtension < minimum) revert LateQuorumVoteExtensionBelowMinimum(voteExtension, minimum);
         if (voteExtension > maximum) revert LateQuorumVoteExtensionAboveMaximum(voteExtension, maximum);
     }
 

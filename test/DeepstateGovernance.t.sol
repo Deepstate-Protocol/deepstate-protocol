@@ -272,6 +272,49 @@ contract DeepstateGovernanceTest is Test {
         assertEq(governor.lateQuorumVoteExtension(), maximum);
     }
 
+    function testLateQuorumExtensionMinimumAppliesAtDeploymentAndGovernanceUpdates() public {
+        uint48 minimum = governor.MIN_LATE_QUORUM_VOTE_EXTENSION();
+        DeepstateGovernor boundaryGovernor = new DeepstateGovernor(
+            IVotes(address(vault)),
+            GOVERNANCE_START_DELAY,
+            VOTING_DELAY,
+            VOTING_PERIOD,
+            PROPOSAL_THRESHOLD_NUMERATOR,
+            QUORUM_NUMERATOR,
+            minimum
+        );
+        assertEq(boundaryGovernor.lateQuorumVoteExtension(), minimum);
+
+        uint48 invalidExtension = minimum - 1;
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeepstateGovernor.LateQuorumVoteExtensionBelowMinimum.selector, invalidExtension, minimum
+            )
+        );
+        new DeepstateGovernor(
+            IVotes(address(vault)),
+            GOVERNANCE_START_DELAY,
+            VOTING_DELAY,
+            VOTING_PERIOD,
+            PROPOSAL_THRESHOLD_NUMERATOR,
+            QUORUM_NUMERATOR,
+            invalidExtension
+        );
+
+        vm.prank(address(governor));
+        governor.setLateQuorumVoteExtension(minimum);
+        assertEq(governor.lateQuorumVoteExtension(), minimum);
+
+        vm.prank(address(governor));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeepstateGovernor.LateQuorumVoteExtensionBelowMinimum.selector, invalidExtension, minimum
+            )
+        );
+        governor.setLateQuorumVoteExtension(invalidExtension);
+        assertEq(governor.lateQuorumVoteExtension(), minimum);
+    }
+
     function testVotingPeriodMaximumAppliesAtDeploymentAndGovernanceUpdates() public {
         uint32 maximum = governor.MAX_VOTING_PERIOD();
         DeepstateGovernor boundaryGovernor = new DeepstateGovernor(

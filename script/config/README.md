@@ -55,7 +55,7 @@ All time values are seconds and use STATE's timestamp clock.
 - `votingPeriod` must be from 1 through 30 days.
 - `proposalThresholdNumerator` and `quorumNumerator` are percentages over 100;
   each must be from 1 through 100.
-- `voteExtension` may be zero and cannot exceed 7 days.
+- `voteExtension` must be from 1 through 7 days.
 
 The current Governor executes successful proposals directly and has no timelock.
 
