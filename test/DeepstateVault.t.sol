@@ -164,6 +164,7 @@ contract DeepstateVaultTest is Test {
         assertEq(vault.depositToken(), address(depositToken));
         assertEq(vault.valueToken(), address(valueToken));
         assertEq(vault.FEE_PURCHASE_PRICE(), 10_000e6);
+        assertEq(vault.DEPOSIT_TOKEN_DECIMALS(), 18);
         assertEq(vault.VALUE_TOKEN_DECIMALS(), 6);
         assertEq(vault.owner(), owner);
         assertEq(vault.CLOCK_MODE(), "mode=timestamp");
@@ -173,6 +174,16 @@ contract DeepstateVaultTest is Test {
 
         vm.expectRevert(DeepstateVault.ZeroAddress.selector);
         new DeepstateVault(owner, address(depositToken), address(0), "Deepstate Governance", "STATE");
+    }
+
+    function testFuzzConstructorRejectsNonEighteenDecimalDepositToken(uint8 depositTokenDecimals) public {
+        vm.assume(depositTokenDecimals != 18);
+        MockERC20 invalidDepositToken = new MockERC20("Invalid DEEP", "iDEEP", depositTokenDecimals);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(DeepstateVault.InvalidDepositTokenDecimals.selector, depositTokenDecimals)
+        );
+        new DeepstateVault(owner, address(invalidDepositToken), address(valueToken), "Deepstate Governance", "STATE");
     }
 
     function testFuzzConstructorRejectsNonSixDecimalValueToken(uint8 valueTokenDecimals) public {
@@ -489,6 +500,24 @@ contract DeepstateVaultTest is Test {
         assertEq(vault.getVotes(alice), 0);
         assertEq(vault.getVotes(bob), 60e18);
         assertEq(valueToken.balanceOf(carol), 400e6);
+    }
+
+    function testRedeemValueRejectsZeroReceiverBeforeBurnOrAllowanceSpend() public {
+        vm.prank(alice);
+        vault.deposit(100e18, alice);
+        valueToken.mint(address(vault), 1_000e6);
+
+        vm.prank(alice);
+        vault.approve(bob, 40e18);
+
+        vm.prank(bob);
+        vm.expectRevert(DeepstateVault.ZeroAddress.selector);
+        vault.redeemValue(40e18, address(0), alice);
+
+        assertEq(vault.balanceOf(alice), 100e18);
+        assertEq(vault.allowance(alice, bob), 40e18);
+        assertEq(valueToken.balanceOf(address(vault)), 1_000e6);
+        assertEq(valueToken.balanceOf(address(0)), 0);
     }
 
     function testDelegateBySigMovesVotesAndConsumesNonce() public {

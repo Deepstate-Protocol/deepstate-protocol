@@ -71,6 +71,7 @@ jobs:
             quality)
               forge fmt --check
               forge build --sizes --threads 0
+              bash test/DeployProductionScript.sh
               ;;
             tests)
               forge test -vvv --threads 0 --no-match-contract '.*Invariant.*'

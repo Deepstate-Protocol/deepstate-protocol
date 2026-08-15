@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "deployment": {
+    "expectedChainId": 46630,
+    "expectedDeployer": "0xf2839ACfe05b16219112a051Dd87994e2FffDa73"
+  },
+  "externalTokens": {
+    "valueToken": "0x7E955252E15c84f5768B83c41a71F9eba181802F",
+    "valueTokenDecimals": 6,
+    "marketToken": "0xd0601CE157Db5bdC3162BbaC2a2C8aF5320D9EEC",
+    "marketTokenDecimals": 18
+  },
+  "deepToken": {
+    "name": "Deepstate",
+    "symbol": "DEEP",
+    "initialMinters": []
+  },
+  "vault": {
+    "name": "Deepstate Governance",
+    "symbol": "STATE"
+  },
+  "router": {
+    "feeBps": 10,
+    "useVaultAsFeeRecipient": true,
+    "feeRecipient": "0x0000000000000000000000000000000000000000"
+  },
+  "governance": {
+    "startDelay": 1296000,
+    "votingDelay": 259200,
+    "votingPeriod": 604800,
+    "proposalThresholdNumerator": 1,
+    "quorumNumerator": 10,
+    "voteExtension": 86400
+  },
+  "rewarder": {
+    "sideEmissionCap": 500000000000000000000000000,
+    "initialFunding": 1000000000000000000000000000,
+    "emissionDuration": 34128000,
+    "marketStartQuantity": 1000000000000000000,
+    "marketMaxQuantity": 5000000000000000000000,
+    "valueStartQuantity": 1000000,
+    "valueMaxQuantity": 1000000000000,
+    "marketBuySideActive": true,
+    "valueBuySideActive": true
+  }
+}
