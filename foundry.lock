@@ -1,6 +1,6 @@
 {
   "lib/deepstate-contracts": {
-    "rev": "59e5bb25a023d96a50a78fb1bd8504b5aa8e14ad"
+    "rev": "37aa0d2ecb4a1f37a45b473729c100b2991c4e2d"
   },
   "lib/forge-std": {
     "tag": {
