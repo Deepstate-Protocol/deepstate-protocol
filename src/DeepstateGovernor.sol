@@ -27,6 +27,7 @@ contract DeepstateGovernor is
     uint256 public constant PROPOSAL_THRESHOLD_DENOMINATOR = 100;
     uint48 public constant MAX_VOTING_DELAY = 30 days;
     uint48 public constant MAX_LATE_QUORUM_VOTE_EXTENSION = 7 days;
+    uint32 public constant MAX_VOTING_PERIOD = 30 days;
 
     uint48 public immutable governanceStart;
 
@@ -38,6 +39,7 @@ contract DeepstateGovernor is
     error GovernanceNotStarted(uint48 currentTimepoint, uint48 governanceStart);
     error VotingDelayAboveMaximum(uint48 votingDelay, uint48 maximum);
     error LateQuorumVoteExtensionAboveMaximum(uint48 voteExtension, uint48 maximum);
+    error VotingPeriodAboveMaximum(uint32 votingPeriod, uint32 maximum);
     error InvalidProposalThresholdFraction(uint256 numerator, uint256 denominator);
     error AbsoluteProposalThresholdUnsupported();
 
@@ -61,6 +63,7 @@ contract DeepstateGovernor is
         }
         _validateVotingDelayMaximum(initialVotingDelay);
         _validateLateQuorumVoteExtension(initialVoteExtension);
+        _validateVotingPeriod(initialVotingPeriod);
 
         governanceStart = SafeCast.toUint48(block.timestamp + governanceStartDelay);
         _updateProposalThresholdNumerator(initialProposalThresholdNumerator);
@@ -91,6 +94,11 @@ contract DeepstateGovernor is
 
     function votingPeriod() public view override(Governor, GovernorSettings) returns (uint256) {
         return super.votingPeriod();
+    }
+
+    function setVotingPeriod(uint32 newVotingPeriod) public override onlyGovernance {
+        _validateVotingPeriod(newVotingPeriod);
+        _setVotingPeriod(newVotingPeriod);
     }
 
     function proposalThreshold() public view override(Governor, GovernorSettings) returns (uint256) {
@@ -158,6 +166,11 @@ contract DeepstateGovernor is
     function _validateLateQuorumVoteExtension(uint48 voteExtension) private pure {
         uint48 maximum = MAX_LATE_QUORUM_VOTE_EXTENSION;
         if (voteExtension > maximum) revert LateQuorumVoteExtensionAboveMaximum(voteExtension, maximum);
+    }
+
+    function _validateVotingPeriod(uint32 votingPeriod_) private pure {
+        uint32 maximum = MAX_VOTING_PERIOD;
+        if (votingPeriod_ > maximum) revert VotingPeriodAboveMaximum(votingPeriod_, maximum);
     }
 
     function _updateProposalThresholdNumerator(uint256 newNumerator) internal {
