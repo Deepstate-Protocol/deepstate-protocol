@@ -23,6 +23,7 @@ contract DeepstateTokenTest is Test {
         assertEq(deepstate.symbol(), "DEEP");
         assertEq(deepstate.decimals(), 18);
         assertTrue(deepstate.hasRole(deepstate.DEFAULT_ADMIN_ROLE(), owner));
+        assertEq(deepstate.defaultAdminCount(), 1);
         assertEq(deepstate.getRoleAdmin(deepstate.MINTER_ROLE()), deepstate.DEFAULT_ADMIN_ROLE());
         assertEq(deepstate.totalSupply(), 0);
     }
@@ -49,6 +50,70 @@ contract DeepstateTokenTest is Test {
         vm.prank(owner);
         deepstate.revokeRole(minterRole, minter);
         assertFalse(deepstate.hasRole(minterRole, minter));
+    }
+
+    function testCannotRevokeFinalDefaultAdmin() public {
+        bytes32 adminRole = deepstate.DEFAULT_ADMIN_ROLE();
+
+        vm.prank(owner);
+        vm.expectRevert(DeepstateToken.LastDefaultAdmin.selector);
+        deepstate.revokeRole(adminRole, owner);
+
+        assertTrue(deepstate.hasRole(adminRole, owner));
+        assertEq(deepstate.defaultAdminCount(), 1);
+    }
+
+    function testCannotRenounceFinalDefaultAdmin() public {
+        bytes32 adminRole = deepstate.DEFAULT_ADMIN_ROLE();
+
+        vm.prank(owner);
+        vm.expectRevert(DeepstateToken.LastDefaultAdmin.selector);
+        deepstate.renounceRole(adminRole, owner);
+
+        assertTrue(deepstate.hasRole(adminRole, owner));
+        assertEq(deepstate.defaultAdminCount(), 1);
+    }
+
+    function testDefaultAdminCanBeTransferredWithoutLosingRoleAdministration() public {
+        bytes32 adminRole = deepstate.DEFAULT_ADMIN_ROLE();
+        bytes32 minterRole = deepstate.MINTER_ROLE();
+
+        vm.startPrank(owner);
+        deepstate.grantRole(adminRole, alice);
+        assertEq(deepstate.defaultAdminCount(), 2);
+        deepstate.renounceRole(adminRole, owner);
+        vm.stopPrank();
+
+        assertFalse(deepstate.hasRole(adminRole, owner));
+        assertTrue(deepstate.hasRole(adminRole, alice));
+        assertEq(deepstate.defaultAdminCount(), 1);
+
+        vm.prank(alice);
+        deepstate.grantRole(minterRole, minter);
+        assertTrue(deepstate.hasRole(minterRole, minter));
+    }
+
+    function testAdminCanRevokeAnotherAdminWhileOneRemains() public {
+        bytes32 adminRole = deepstate.DEFAULT_ADMIN_ROLE();
+
+        vm.startPrank(owner);
+        deepstate.grantRole(adminRole, alice);
+        deepstate.revokeRole(adminRole, alice);
+        vm.stopPrank();
+
+        assertTrue(deepstate.hasRole(adminRole, owner));
+        assertFalse(deepstate.hasRole(adminRole, alice));
+        assertEq(deepstate.defaultAdminCount(), 1);
+    }
+
+    function testCannotUseZeroAddressAsReplacementDefaultAdmin() public {
+        bytes32 adminRole = deepstate.DEFAULT_ADMIN_ROLE();
+
+        vm.prank(owner);
+        vm.expectRevert(DeepstateToken.ZeroAddress.selector);
+        deepstate.grantRole(adminRole, address(0));
+
+        assertEq(deepstate.defaultAdminCount(), 1);
     }
 
     function testMultipleMintersCanMintAndRevocationStopsMinting() public {
