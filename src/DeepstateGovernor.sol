@@ -25,6 +25,7 @@ contract DeepstateGovernor is
 {
     bytes32 private constant _TIMESTAMP_MODE_HASH = keccak256("mode=timestamp");
     uint256 public constant PROPOSAL_THRESHOLD_DENOMINATOR = 100;
+    uint48 public constant MAX_VOTING_DELAY = 30 days;
 
     uint48 public immutable governanceStart;
 
@@ -34,6 +35,7 @@ contract DeepstateGovernor is
 
     error TimestampClockRequired();
     error GovernanceNotStarted(uint48 currentTimepoint, uint48 governanceStart);
+    error VotingDelayAboveMaximum(uint48 votingDelay, uint48 maximum);
     error InvalidProposalThresholdFraction(uint256 numerator, uint256 denominator);
     error AbsoluteProposalThresholdUnsupported();
 
@@ -55,6 +57,7 @@ contract DeepstateGovernor is
         if (!_usesTimestampClock(IERC5805(address(stateToken)))) {
             revert TimestampClockRequired();
         }
+        _validateVotingDelayMaximum(initialVotingDelay);
 
         governanceStart = SafeCast.toUint48(block.timestamp + governanceStartDelay);
         _updateProposalThresholdNumerator(initialProposalThresholdNumerator);
@@ -76,6 +79,11 @@ contract DeepstateGovernor is
 
     function votingDelay() public view override(Governor, GovernorSettings) returns (uint256) {
         return super.votingDelay();
+    }
+
+    function setVotingDelay(uint48 newVotingDelay) public override onlyGovernance {
+        _validateVotingDelayMaximum(newVotingDelay);
+        _setVotingDelay(newVotingDelay);
     }
 
     function votingPeriod() public view override(Governor, GovernorSettings) returns (uint256) {
@@ -132,6 +140,11 @@ contract DeepstateGovernor is
 
     function _tallyUpdated(uint256 proposalId) internal override(Governor, GovernorPreventLateQuorum) {
         super._tallyUpdated(proposalId);
+    }
+
+    function _validateVotingDelayMaximum(uint48 votingDelay_) private pure {
+        uint48 maximum = MAX_VOTING_DELAY;
+        if (votingDelay_ > maximum) revert VotingDelayAboveMaximum(votingDelay_, maximum);
     }
 
     function _updateProposalThresholdNumerator(uint256 newNumerator) internal {

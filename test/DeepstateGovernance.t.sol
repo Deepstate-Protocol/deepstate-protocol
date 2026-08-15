@@ -148,6 +148,45 @@ contract DeepstateGovernanceTest is Test {
         assertEq(governor.quorum(snapshot), 10e18);
     }
 
+    function testVotingDelayMaximumAppliesAtDeploymentAndGovernanceUpdates() public {
+        uint48 maximum = governor.MAX_VOTING_DELAY();
+        DeepstateGovernor boundaryGovernor = new DeepstateGovernor(
+            IVotes(address(vault)),
+            GOVERNANCE_START_DELAY,
+            maximum,
+            VOTING_PERIOD,
+            PROPOSAL_THRESHOLD_NUMERATOR,
+            QUORUM_NUMERATOR,
+            VOTE_EXTENSION
+        );
+        assertEq(boundaryGovernor.votingDelay(), maximum);
+
+        uint48 invalidDelay = maximum + 1;
+        vm.expectRevert(
+            abi.encodeWithSelector(DeepstateGovernor.VotingDelayAboveMaximum.selector, invalidDelay, maximum)
+        );
+        new DeepstateGovernor(
+            IVotes(address(vault)),
+            GOVERNANCE_START_DELAY,
+            invalidDelay,
+            VOTING_PERIOD,
+            PROPOSAL_THRESHOLD_NUMERATOR,
+            QUORUM_NUMERATOR,
+            VOTE_EXTENSION
+        );
+
+        vm.prank(address(governor));
+        governor.setVotingDelay(maximum);
+        assertEq(governor.votingDelay(), maximum);
+
+        vm.prank(address(governor));
+        vm.expectRevert(
+            abi.encodeWithSelector(DeepstateGovernor.VotingDelayAboveMaximum.selector, invalidDelay, maximum)
+        );
+        governor.setVotingDelay(invalidDelay);
+        assertEq(governor.votingDelay(), maximum);
+    }
+
     function testProposalThresholdIsOneAtClockOrigin() public {
         vm.warp(0);
         assertEq(governor.proposalThreshold(), 1);
