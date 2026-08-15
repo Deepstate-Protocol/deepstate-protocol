@@ -129,30 +129,34 @@ forge test
 
 ## Deployment
 
-`script/DeployDeepstate.s.sol` deploys the core stack and the NVDA/USDG
-rewarder, enables that pool hook, grants the Governor `DeepstateToken`'s
-default admin role, and transfers ownership of the vault, rewarder, and
-`DeepstateV1` to `DeepstateGovernor`. The rewarder is prefunded with its fixed
-1,000,000,000 DEEP allocation and receives no mint authority. An optional
-additional minter may be configured for a separate emissions path.
-
-Required environment variables:
+Production deployments use a required, versioned JSON configuration with no
+fallback values. Start from `script/config/production.example.json` and review
+every field. The example is configured for a Robinhood testnet rehearsal with
+Paxos testnet USDG and a no-code NVDA stand-in; update the expected deployer and
+use `--skip-market-token-validation` only for that rehearsal.
 
 ```bash
+cp script/config/production.example.json deployments/production.json
+
 export PRIVATE_KEY=...
-export VALUE_TOKEN=0x... # USDG, required to report 6 decimals
-export NVDA_TOKEN=0x...  # NVDA, required to report 18 decimals
+export RPC_URL=https://rpc.testnet.chain.robinhood.com/
+export BLOCKSCOUT_VERIFIER_URL=https://explorer.testnet.chain.robinhood.com/api/
+export DEEPSTATE_DEPLOYMENT_CONFIG=deployments/production.json
+export DEEPSTATE_DEPLOYMENT_OUTPUT=deployments/production-addresses.json
+
+./script/deploy-production.sh
 ```
 
-Optional environment variables include `ROUTER_FEE_BPS` (10 bps by default),
-`DEEP_MINTER`, and the `GOVERNOR_*` governance parameters. The launch parameters are
-`GOVERNOR_START_DELAY`, `GOVERNOR_VOTING_DELAY`,
-`GOVERNOR_VOTING_PERIOD`, `GOVERNOR_PROPOSAL_THRESHOLD_NUMERATOR`,
-`GOVERNOR_QUORUM_NUMERATOR`, and `GOVERNOR_VOTE_EXTENSION`.
+The entrypoint validates the chain, signer, token code and decimals, and all
+configuration ranges and the Blockscout API before broadcasting. It then deploys
+and configures the stack sequentially, requests Blockscout source verification,
+reopens the final contracts through the live RPC, and writes a machine-readable
+address manifest.
+It fails unless Governor is the sole DEEP admin and final owner of the vault,
+rewarder, and router, with no residual deployer authority.
 
-```bash
-forge script script/DeployDeepstate.s.sol:DeployDeepstate \
-  --rpc-url "$RPC_URL" \
-  --broadcast \
-  --verify
-```
+See [`script/config/README.md`](script/config/README.md) for Robinhood mainnet and
+testnet endpoints, the testnet-only `--skip-market-token-validation` rehearsal
+flag, every parameter, validation rule, and manifest field. The flag bypasses
+only the external market-token bytecode and decimals preflight; Blockscout
+source verification of every newly deployed protocol contract still runs.

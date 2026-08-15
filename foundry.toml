@@ -8,5 +8,9 @@ auto_detect_solc = false
 optimizer = true
 optimizer_runs = 200
 via_ir = true
+fs_permissions = [
+    { access = "read", path = "./script/config" },
+    { access = "read-write", path = "./deployments" },
+]
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
