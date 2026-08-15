@@ -164,6 +164,7 @@ contract DeepstateVaultTest is Test {
         assertEq(vault.depositToken(), address(depositToken));
         assertEq(vault.valueToken(), address(valueToken));
         assertEq(vault.FEE_PURCHASE_PRICE(), 10_000e6);
+        assertEq(vault.DEPOSIT_TOKEN_DECIMALS(), 18);
         assertEq(vault.VALUE_TOKEN_DECIMALS(), 6);
         assertEq(vault.owner(), owner);
         assertEq(vault.CLOCK_MODE(), "mode=timestamp");
@@ -173,6 +174,16 @@ contract DeepstateVaultTest is Test {
 
         vm.expectRevert(DeepstateVault.ZeroAddress.selector);
         new DeepstateVault(owner, address(depositToken), address(0), "Deepstate Governance", "STATE");
+    }
+
+    function testFuzzConstructorRejectsNonEighteenDecimalDepositToken(uint8 depositTokenDecimals) public {
+        vm.assume(depositTokenDecimals != 18);
+        MockERC20 invalidDepositToken = new MockERC20("Invalid DEEP", "iDEEP", depositTokenDecimals);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(DeepstateVault.InvalidDepositTokenDecimals.selector, depositTokenDecimals)
+        );
+        new DeepstateVault(owner, address(invalidDepositToken), address(valueToken), "Deepstate Governance", "STATE");
     }
 
     function testFuzzConstructorRejectsNonSixDecimalValueToken(uint8 valueTokenDecimals) public {

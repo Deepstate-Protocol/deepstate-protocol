@@ -31,6 +31,7 @@ contract DeepstateVault is ERC4626, ERC20Votes, Ownable, ReentrancyGuard {
 
     /// @notice Fixed price for purchasing the vault's listed non-USDG fee balances.
     uint256 public constant FEE_PURCHASE_PRICE = 10_000e6;
+    uint8 public constant DEPOSIT_TOKEN_DECIMALS = 18;
     uint8 public constant VALUE_TOKEN_DECIMALS = 6;
 
     address public immutable depositToken;
@@ -63,6 +64,7 @@ contract DeepstateVault is ERC4626, ERC20Votes, Ownable, ReentrancyGuard {
     error MinimumAmountsRequired();
     error MinimumAssetAmountNotMet(address token, uint256 amount, uint256 minimum);
     error InvalidFeePayment();
+    error InvalidDepositTokenDecimals(uint8 actualDecimals);
     error InvalidValueTokenDecimals(uint8 actualDecimals);
     error MinimumSharesNotMet(uint256 shares, uint256 minimum);
     error MaximumAssetsExceeded(uint256 assets, uint256 maximum);
@@ -75,6 +77,10 @@ contract DeepstateVault is ERC4626, ERC20Votes, Ownable, ReentrancyGuard {
     {
         if (depositToken_ == address(0) || valueToken_ == address(0)) {
             revert ZeroAddress();
+        }
+        uint8 depositTokenDecimals = IERC20Metadata(depositToken_).decimals();
+        if (depositTokenDecimals != DEPOSIT_TOKEN_DECIMALS) {
+            revert InvalidDepositTokenDecimals(depositTokenDecimals);
         }
         uint8 valueTokenDecimals = IERC20Metadata(valueToken_).decimals();
         if (valueTokenDecimals != VALUE_TOKEN_DECIMALS) revert InvalidValueTokenDecimals(valueTokenDecimals);
