@@ -187,6 +187,49 @@ contract DeepstateGovernanceTest is Test {
         assertEq(governor.votingDelay(), maximum);
     }
 
+    function testLateQuorumExtensionMaximumAppliesAtDeploymentAndGovernanceUpdates() public {
+        uint48 maximum = governor.MAX_LATE_QUORUM_VOTE_EXTENSION();
+        DeepstateGovernor boundaryGovernor = new DeepstateGovernor(
+            IVotes(address(vault)),
+            GOVERNANCE_START_DELAY,
+            VOTING_DELAY,
+            VOTING_PERIOD,
+            PROPOSAL_THRESHOLD_NUMERATOR,
+            QUORUM_NUMERATOR,
+            maximum
+        );
+        assertEq(boundaryGovernor.lateQuorumVoteExtension(), maximum);
+
+        uint48 invalidExtension = maximum + 1;
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeepstateGovernor.LateQuorumVoteExtensionAboveMaximum.selector, invalidExtension, maximum
+            )
+        );
+        new DeepstateGovernor(
+            IVotes(address(vault)),
+            GOVERNANCE_START_DELAY,
+            VOTING_DELAY,
+            VOTING_PERIOD,
+            PROPOSAL_THRESHOLD_NUMERATOR,
+            QUORUM_NUMERATOR,
+            invalidExtension
+        );
+
+        vm.prank(address(governor));
+        governor.setLateQuorumVoteExtension(maximum);
+        assertEq(governor.lateQuorumVoteExtension(), maximum);
+
+        vm.prank(address(governor));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeepstateGovernor.LateQuorumVoteExtensionAboveMaximum.selector, invalidExtension, maximum
+            )
+        );
+        governor.setLateQuorumVoteExtension(invalidExtension);
+        assertEq(governor.lateQuorumVoteExtension(), maximum);
+    }
+
     function testProposalThresholdIsOneAtClockOrigin() public {
         vm.warp(0);
         assertEq(governor.proposalThreshold(), 1);
