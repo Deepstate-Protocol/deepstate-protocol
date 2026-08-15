@@ -51,6 +51,10 @@ contract ReenteringNativeReceiver {
 contract FeeOnTransferERC20 is OZERC20 {
     constructor() OZERC20("Fee-on-transfer USDG", "fUSDG") {}
 
+    function decimals() public pure override returns (uint8) {
+        return 6;
+    }
+
     function mint(address to, uint256 amount) external {
         _mint(to, amount);
     }
@@ -142,6 +146,7 @@ contract DeepstateVaultTest is Test {
         assertEq(vault.depositToken(), address(depositToken));
         assertEq(vault.valueToken(), address(valueToken));
         assertEq(vault.FEE_PURCHASE_PRICE(), 10_000e6);
+        assertEq(vault.VALUE_TOKEN_DECIMALS(), 6);
         assertEq(vault.owner(), owner);
         assertEq(vault.CLOCK_MODE(), "mode=timestamp");
 
@@ -150,6 +155,14 @@ contract DeepstateVaultTest is Test {
 
         vm.expectRevert(DeepstateVault.ZeroAddress.selector);
         new DeepstateVault(owner, address(depositToken), address(0), "Deepstate Governance", "STATE");
+    }
+
+    function testFuzzConstructorRejectsNonSixDecimalValueToken(uint8 valueTokenDecimals) public {
+        vm.assume(valueTokenDecimals != 6);
+        MockERC20 invalidValueToken = new MockERC20("Invalid USDG", "iUSDG", valueTokenDecimals);
+
+        vm.expectRevert(abi.encodeWithSelector(DeepstateVault.InvalidValueTokenDecimals.selector, valueTokenDecimals));
+        new DeepstateVault(owner, address(depositToken), address(invalidValueToken), "Deepstate Governance", "STATE");
     }
 
     function testPreviewRedeemValueReturnsZeroBeforeSupplyExists() public view {
