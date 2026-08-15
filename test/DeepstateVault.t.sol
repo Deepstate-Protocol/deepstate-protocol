@@ -502,6 +502,24 @@ contract DeepstateVaultTest is Test {
         assertEq(valueToken.balanceOf(carol), 400e6);
     }
 
+    function testRedeemValueRejectsZeroReceiverBeforeBurnOrAllowanceSpend() public {
+        vm.prank(alice);
+        vault.deposit(100e18, alice);
+        valueToken.mint(address(vault), 1_000e6);
+
+        vm.prank(alice);
+        vault.approve(bob, 40e18);
+
+        vm.prank(bob);
+        vm.expectRevert(DeepstateVault.ZeroAddress.selector);
+        vault.redeemValue(40e18, address(0), alice);
+
+        assertEq(vault.balanceOf(alice), 100e18);
+        assertEq(vault.allowance(alice, bob), 40e18);
+        assertEq(valueToken.balanceOf(address(vault)), 1_000e6);
+        assertEq(valueToken.balanceOf(address(0)), 0);
+    }
+
     function testDelegateBySigMovesVotesAndConsumesNonce() public {
         uint256 signerPrivateKey = 0xA11CE;
         address signer = vm.addr(signerPrivateKey);

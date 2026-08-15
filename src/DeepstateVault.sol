@@ -129,6 +129,7 @@ contract DeepstateVault is ERC4626, ERC20Votes, Ownable, ReentrancyGuard {
         returns (uint256 valueAssets)
     {
         if (shares == 0) revert ZeroShares();
+        if (receiver == address(0)) revert ZeroAddress();
         if (shares > balanceOf(owner)) revert ERC4626ExceededMaxRedeem(owner, shares, balanceOf(owner));
 
         valueAssets = convertToValueAssets(shares);
