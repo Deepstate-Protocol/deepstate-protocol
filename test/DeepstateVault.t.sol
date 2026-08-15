@@ -3,14 +3,31 @@ pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 import {ERC20 as OZERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {ERC4626} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
 
 import {DeepstateVault} from "../src/DeepstateVault.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 
 contract DeepstateVaultHarness is DeepstateVault {
+    uint256 private depositCap = type(uint256).max;
+    uint256 private mintCap = type(uint256).max;
+
     constructor(address owner_, address depositToken_, address valueToken_, string memory name_, string memory symbol_)
         DeepstateVault(owner_, depositToken_, valueToken_, name_, symbol_)
     {}
+
+    function setEntryCaps(uint256 depositCap_, uint256 mintCap_) external {
+        depositCap = depositCap_;
+        mintCap = mintCap_;
+    }
+
+    function maxDeposit(address) public view override returns (uint256) {
+        return depositCap;
+    }
+
+    function maxMint(address) public view override returns (uint256) {
+        return mintCap;
+    }
 
     function exposedDeposit(address caller, address receiver, uint256 assets, uint256 shares) external {
         _deposit(caller, receiver, assets, shares);
@@ -180,6 +197,82 @@ contract DeepstateVaultTest is Test {
         vault.mint(0, alice);
 
         vm.stopPrank();
+    }
+
+    function testBoundedDepositAndMintAcceptExactLiveLimits() public {
+        vm.prank(alice);
+        uint256 aliceShares = vault.deposit(25e18, alice, 25e18);
+
+        vm.prank(bob);
+        uint256 bobAssets = vault.mint(25e18, bob, 25e18);
+
+        assertEq(aliceShares, 25e18);
+        assertEq(bobAssets, 25e18);
+        assertEq(vault.balanceOf(alice), 25e18);
+        assertEq(vault.balanceOf(bob), 25e18);
+        assertEq(vault.totalSupply(), 50e18);
+        assertEq(vault.totalBurnedDepositAssets(), 50e18);
+    }
+
+    function testBoundedDepositAndMintEnforceVaultEntryCaps() public {
+        DeepstateVaultHarness harness = new DeepstateVaultHarness(
+            owner, address(depositToken), address(valueToken), "Deepstate Governance", "STATE"
+        );
+        harness.setEntryCaps(10e18, 20e18);
+
+        vm.expectRevert(abi.encodeWithSelector(ERC4626.ERC4626ExceededMaxDeposit.selector, alice, 10e18 + 1, 10e18));
+        harness.deposit(10e18 + 1, alice, 0);
+
+        vm.expectRevert(abi.encodeWithSelector(ERC4626.ERC4626ExceededMaxMint.selector, alice, 20e18 + 1, 20e18));
+        harness.mint(20e18 + 1, alice, type(uint256).max);
+    }
+
+    function testBoundedDepositRejectsWorsenedLiveShareQuoteWithoutBurningAssets() public {
+        vm.prank(alice);
+        vault.deposit(100e18, alice);
+        valueToken.mint(address(vault), 100e6);
+
+        uint256 victimAssets = 50e18;
+        uint256 quotedShares = vault.previewDeposit(victimAssets);
+        vm.prank(alice);
+        vault.redeemValue(50e18, alice, alice);
+
+        uint256 liveShares = vault.previewDeposit(victimAssets);
+        assertEq(quotedShares, 50e18);
+        assertEq(liveShares, 25e18);
+
+        uint256 bobAssetsBefore = depositToken.balanceOf(bob);
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(DeepstateVault.MinimumSharesNotMet.selector, liveShares, quotedShares));
+        vault.deposit(victimAssets, bob, quotedShares);
+
+        assertEq(depositToken.balanceOf(bob), bobAssetsBefore);
+        assertEq(vault.balanceOf(bob), 0);
+        assertEq(vault.totalBurnedDepositAssets(), 100e18);
+    }
+
+    function testBoundedMintRejectsWorsenedLiveAssetQuoteWithoutBurningAssets() public {
+        vm.prank(alice);
+        vault.deposit(100e18, alice);
+        valueToken.mint(address(vault), 100e6);
+
+        uint256 targetShares = 50e18;
+        uint256 quotedAssets = vault.previewMint(targetShares);
+        vm.prank(alice);
+        vault.redeemValue(50e18, alice, alice);
+
+        uint256 liveAssets = vault.previewMint(targetShares);
+        assertEq(quotedAssets, 50e18);
+        assertEq(liveAssets, 100e18);
+
+        uint256 bobAssetsBefore = depositToken.balanceOf(bob);
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(DeepstateVault.MaximumAssetsExceeded.selector, liveAssets, quotedAssets));
+        vault.mint(targetShares, bob, quotedAssets);
+
+        assertEq(depositToken.balanceOf(bob), bobAssetsBefore);
+        assertEq(vault.balanceOf(bob), 0);
+        assertEq(vault.totalBurnedDepositAssets(), 100e18);
     }
 
     function testInternalDepositRejectsZeroShares() public {

@@ -63,6 +63,8 @@ contract DeepstateVault is ERC4626, ERC20Votes, Ownable, ReentrancyGuard {
     error MinimumAssetAmountNotMet(address token, uint256 amount, uint256 minimum);
     error InvalidFeePayment();
     error InvalidValueTokenDecimals(uint8 actualDecimals);
+    error MinimumSharesNotMet(uint256 shares, uint256 minimum);
+    error MaximumAssetsExceeded(uint256 assets, uint256 maximum);
 
     constructor(address owner_, address depositToken_, address valueToken_, string memory name_, string memory symbol_)
         ERC20(name_, symbol_)
@@ -231,6 +233,26 @@ contract DeepstateVault is ERC4626, ERC20Votes, Ownable, ReentrancyGuard {
         }
 
         emit FeesPurchased(msg.sender, receiver, FEE_PURCHASE_PRICE);
+    }
+
+    /// @notice Deposits assets only if the live conversion mints at least `minShares`.
+    function deposit(uint256 assets, address receiver, uint256 minShares) public returns (uint256 shares) {
+        uint256 maxAssets = maxDeposit(receiver);
+        if (assets > maxAssets) revert ERC4626ExceededMaxDeposit(receiver, assets, maxAssets);
+
+        shares = previewDeposit(assets);
+        if (shares < minShares) revert MinimumSharesNotMet(shares, minShares);
+        _deposit(_msgSender(), receiver, assets, shares);
+    }
+
+    /// @notice Mints shares only if the live conversion consumes at most `maxAssets`.
+    function mint(uint256 shares, address receiver, uint256 maxAssets) public returns (uint256 assets) {
+        uint256 maxShares = maxMint(receiver);
+        if (shares > maxShares) revert ERC4626ExceededMaxMint(receiver, shares, maxShares);
+
+        assets = previewMint(shares);
+        if (assets > maxAssets) revert MaximumAssetsExceeded(assets, maxAssets);
+        _deposit(_msgSender(), receiver, assets, shares);
     }
 
     /// @dev Strict ERC-4626 withdrawal would return the deposit asset, which is burned here.
