@@ -53,6 +53,14 @@ contract CountingHook is IHook {
     }
 }
 
+contract RewardDeepstateHarness is DeepstateV1 {
+    function forceNextNonce(address token0, address token1, uint256 epoch, uint32 nonce) external {
+        bytes32 id = bookId(token0, token1, epoch);
+        uint256 nonceAndFlags = books[id].nonceAndFlags;
+        books[id].nonceAndFlags = (nonceAndFlags & ~uint256(type(uint32).max)) | uint256(nonce);
+    }
+}
+
 contract DeepstateRewarderTest is Test {
     uint32 internal constant MAX_ORDER_NONCE = type(uint32).max;
     uint96 internal constant NVDA_SIDE_CAP = 500_000_000e18;
@@ -62,7 +70,7 @@ contract DeepstateRewarderTest is Test {
     bytes32 internal constant INVALID_POOL_ID = keccak256("invalid-pool");
     bytes32 internal constant EMPTY_BOOK_ID = keccak256("empty-book");
 
-    DeepstateV1 internal deepstate;
+    RewardDeepstateHarness internal deepstate;
     DeepstateRewarder internal rewarder;
     bytes32 internal configuredPoolId;
     RewardTestERC20 internal token0;
@@ -85,7 +93,7 @@ contract DeepstateRewarderTest is Test {
             token1 = a;
         }
 
-        deepstate = new DeepstateV1();
+        deepstate = new RewardDeepstateHarness();
         rewardToken = new RewardTestERC20("Reward", "RWD");
         configuredPoolId = deepstate.poolId(address(token0), address(token1));
         rewarder = _deployRewarder(
@@ -429,6 +437,32 @@ contract DeepstateRewarderTest is Test {
         assertEq(rewardToken.balanceOf(alice), expected);
         assertEq(rewarder.balances(id, address(token1), MAX_ORDER_NONCE), 0);
         assertEq(rewarder.claimants(aliceOrderId), alice);
+    }
+
+    function test_BookRotationAccruesAndPreservesHistoricalTopReward() public {
+        bytes32 id = deepstate.bookId(address(token0), address(token1), 0);
+
+        vm.prank(alice);
+        bytes32 aliceBid = deepstate.fill(_fill(0, _order(0, 5e18, 0), true, false, false));
+        (, uint64 startedAt) = rewarder.rewardees(address(token1));
+        vm.warp(block.timestamp + 1 days);
+
+        uint256 expected = rewarder.previewReward(address(token1), startedAt, block.timestamp, 5e18);
+        assertGt(expected, 0);
+
+        deepstate.forceNextNonce(address(token0), address(token1), 0, 2);
+        vm.prank(bob);
+        deepstate.fill(_fill(0, _order(-1, 2e18, 0), true, false, false));
+
+        assertEq(deepstate.poolEpoch(configuredPoolId), 1);
+        assertEq(rewarder.balances(id, address(token1), MAX_ORDER_NONCE), expected);
+        (uint32 currentNonce, uint64 currentStartedAt) = rewarder.rewardees(address(token1));
+        assertEq(currentNonce, 0);
+        assertEq(currentStartedAt, 0);
+
+        rewarder.distributeRewards(id, aliceBid, address(token1));
+        assertEq(rewarder.balances(id, address(token1), MAX_ORDER_NONCE), 0);
+        assertEq(rewardToken.balanceOf(alice), expected);
     }
 
     function test_InlineRegistrationPreservesFinalAccrualAfterCancel() public {

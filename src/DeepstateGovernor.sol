@@ -25,6 +25,11 @@ contract DeepstateGovernor is
 {
     bytes32 private constant _TIMESTAMP_MODE_HASH = keccak256("mode=timestamp");
     uint256 public constant PROPOSAL_THRESHOLD_DENOMINATOR = 100;
+    uint48 public constant MIN_VOTING_DELAY = 1 days;
+    uint48 public constant MAX_VOTING_DELAY = 30 days;
+    uint48 public constant MAX_LATE_QUORUM_VOTE_EXTENSION = 7 days;
+    uint32 public constant MAX_VOTING_PERIOD = 30 days;
+    uint256 public constant MINIMUM_QUORUM = 1e18;
 
     uint48 public immutable governanceStart;
 
@@ -34,6 +39,10 @@ contract DeepstateGovernor is
 
     error TimestampClockRequired();
     error GovernanceNotStarted(uint48 currentTimepoint, uint48 governanceStart);
+    error VotingDelayBelowMinimum(uint48 votingDelay, uint48 minimum);
+    error VotingDelayAboveMaximum(uint48 votingDelay, uint48 maximum);
+    error LateQuorumVoteExtensionAboveMaximum(uint48 voteExtension, uint48 maximum);
+    error VotingPeriodAboveMaximum(uint32 votingPeriod, uint32 maximum);
     error InvalidProposalThresholdFraction(uint256 numerator, uint256 denominator);
     error AbsoluteProposalThresholdUnsupported();
 
@@ -52,9 +61,16 @@ contract DeepstateGovernor is
         GovernorVotesQuorumFraction(quorumNumeratorValue)
         GovernorPreventLateQuorum(initialVoteExtension)
     {
+        if (quorumNumeratorValue == 0) {
+            revert GovernorInvalidQuorumFraction(quorumNumeratorValue, quorumDenominator());
+        }
         if (!_usesTimestampClock(IERC5805(address(stateToken)))) {
             revert TimestampClockRequired();
         }
+        _validateVotingDelayMinimum(initialVotingDelay);
+        _validateVotingDelayMaximum(initialVotingDelay);
+        _validateLateQuorumVoteExtension(initialVoteExtension);
+        _validateVotingPeriod(initialVotingPeriod);
 
         governanceStart = SafeCast.toUint48(block.timestamp + governanceStartDelay);
         _updateProposalThresholdNumerator(initialProposalThresholdNumerator);
@@ -78,20 +94,30 @@ contract DeepstateGovernor is
         return super.votingDelay();
     }
 
+    function setVotingDelay(uint48 newVotingDelay) public override onlyGovernance {
+        _validateVotingDelayMinimum(newVotingDelay);
+        _validateVotingDelayMaximum(newVotingDelay);
+        _setVotingDelay(newVotingDelay);
+    }
+
     function votingPeriod() public view override(Governor, GovernorSettings) returns (uint256) {
         return super.votingPeriod();
     }
 
-    function proposalThreshold() public view override(Governor, GovernorSettings) returns (uint256) {
-        uint48 currentTimepoint = clock();
-        if (currentTimepoint == 0) return 0;
+    function setVotingPeriod(uint32 newVotingPeriod) public override onlyGovernance {
+        _validateVotingPeriod(newVotingPeriod);
+        _setVotingPeriod(newVotingPeriod);
+    }
 
-        return Math.mulDiv(
-            token().getPastTotalSupply(currentTimepoint - 1),
-            _proposalThresholdNumerator,
-            PROPOSAL_THRESHOLD_DENOMINATOR,
-            Math.Rounding.Ceil
-        );
+    function proposalThreshold() public view override(Governor, GovernorSettings) returns (uint256) {
+        uint256 numerator = _proposalThresholdNumerator;
+        uint48 currentTimepoint = clock();
+        if (currentTimepoint == 0) return numerator == 0 ? 0 : 1;
+
+        uint256 pastTotalSupply = token().getPastTotalSupply(currentTimepoint - 1);
+        if (pastTotalSupply == 0 && numerator != 0) return 1;
+
+        return Math.mulDiv(pastTotalSupply, numerator, PROPOSAL_THRESHOLD_DENOMINATOR, Math.Rounding.Ceil);
     }
 
     function proposalThresholdNumerator() public view returns (uint256) {
@@ -119,7 +145,14 @@ contract DeepstateGovernor is
     }
 
     function quorum(uint256 timepoint) public view override(Governor, GovernorVotesQuorumFraction) returns (uint256) {
-        return super.quorum(timepoint);
+        return Math.max(super.quorum(timepoint), MINIMUM_QUORUM);
+    }
+
+    function _updateQuorumNumerator(uint256 newQuorumNumerator) internal override {
+        if (newQuorumNumerator == 0) {
+            revert GovernorInvalidQuorumFraction(newQuorumNumerator, quorumDenominator());
+        }
+        super._updateQuorumNumerator(newQuorumNumerator);
     }
 
     function proposalDeadline(uint256 proposalId)
@@ -131,13 +164,38 @@ contract DeepstateGovernor is
         return super.proposalDeadline(proposalId);
     }
 
+    function setLateQuorumVoteExtension(uint48 newVoteExtension) public override onlyGovernance {
+        _validateLateQuorumVoteExtension(newVoteExtension);
+        _setLateQuorumVoteExtension(newVoteExtension);
+    }
+
     function _tallyUpdated(uint256 proposalId) internal override(Governor, GovernorPreventLateQuorum) {
         super._tallyUpdated(proposalId);
     }
 
+    function _validateVotingDelayMaximum(uint48 votingDelay_) private pure {
+        uint48 maximum = MAX_VOTING_DELAY;
+        if (votingDelay_ > maximum) revert VotingDelayAboveMaximum(votingDelay_, maximum);
+    }
+
+    function _validateVotingDelayMinimum(uint48 votingDelay_) private pure {
+        uint48 minimum = MIN_VOTING_DELAY;
+        if (votingDelay_ < minimum) revert VotingDelayBelowMinimum(votingDelay_, minimum);
+    }
+
+    function _validateLateQuorumVoteExtension(uint48 voteExtension) private pure {
+        uint48 maximum = MAX_LATE_QUORUM_VOTE_EXTENSION;
+        if (voteExtension > maximum) revert LateQuorumVoteExtensionAboveMaximum(voteExtension, maximum);
+    }
+
+    function _validateVotingPeriod(uint32 votingPeriod_) private pure {
+        uint32 maximum = MAX_VOTING_PERIOD;
+        if (votingPeriod_ > maximum) revert VotingPeriodAboveMaximum(votingPeriod_, maximum);
+    }
+
     function _updateProposalThresholdNumerator(uint256 newNumerator) internal {
         uint256 denominator = PROPOSAL_THRESHOLD_DENOMINATOR;
-        if (newNumerator > denominator) {
+        if (newNumerator == 0 || newNumerator > denominator) {
             revert InvalidProposalThresholdFraction(newNumerator, denominator);
         }
 

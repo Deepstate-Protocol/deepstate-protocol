@@ -5,6 +5,9 @@ import {Test} from "forge-std/Test.sol";
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IGovernor} from "@openzeppelin/contracts/governance/IGovernor.sol";
+import {
+    GovernorVotesQuorumFraction
+} from "@openzeppelin/contracts/governance/extensions/GovernorVotesQuorumFraction.sol";
 import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
 
 import {DeepstateGovernor} from "../src/DeepstateGovernor.sol";
@@ -148,9 +151,191 @@ contract DeepstateGovernanceTest is Test {
         assertEq(governor.quorum(snapshot), 10e18);
     }
 
-    function testProposalThresholdIsZeroAtClockOrigin() public {
+    function testVotingDelayMaximumAppliesAtDeploymentAndGovernanceUpdates() public {
+        uint48 maximum = governor.MAX_VOTING_DELAY();
+        DeepstateGovernor boundaryGovernor = new DeepstateGovernor(
+            IVotes(address(vault)),
+            GOVERNANCE_START_DELAY,
+            maximum,
+            VOTING_PERIOD,
+            PROPOSAL_THRESHOLD_NUMERATOR,
+            QUORUM_NUMERATOR,
+            VOTE_EXTENSION
+        );
+        assertEq(boundaryGovernor.votingDelay(), maximum);
+
+        uint48 invalidDelay = maximum + 1;
+        vm.expectRevert(
+            abi.encodeWithSelector(DeepstateGovernor.VotingDelayAboveMaximum.selector, invalidDelay, maximum)
+        );
+        new DeepstateGovernor(
+            IVotes(address(vault)),
+            GOVERNANCE_START_DELAY,
+            invalidDelay,
+            VOTING_PERIOD,
+            PROPOSAL_THRESHOLD_NUMERATOR,
+            QUORUM_NUMERATOR,
+            VOTE_EXTENSION
+        );
+
+        vm.prank(address(governor));
+        governor.setVotingDelay(maximum);
+        assertEq(governor.votingDelay(), maximum);
+
+        vm.prank(address(governor));
+        vm.expectRevert(
+            abi.encodeWithSelector(DeepstateGovernor.VotingDelayAboveMaximum.selector, invalidDelay, maximum)
+        );
+        governor.setVotingDelay(invalidDelay);
+        assertEq(governor.votingDelay(), maximum);
+    }
+
+    function testVotingDelayMinimumAppliesAtDeploymentAndGovernanceUpdates() public {
+        uint48 minimum = governor.MIN_VOTING_DELAY();
+        DeepstateGovernor boundaryGovernor = new DeepstateGovernor(
+            IVotes(address(vault)),
+            GOVERNANCE_START_DELAY,
+            minimum,
+            VOTING_PERIOD,
+            PROPOSAL_THRESHOLD_NUMERATOR,
+            QUORUM_NUMERATOR,
+            VOTE_EXTENSION
+        );
+        assertEq(boundaryGovernor.votingDelay(), minimum);
+
+        uint48 invalidDelay = minimum - 1;
+        vm.expectRevert(
+            abi.encodeWithSelector(DeepstateGovernor.VotingDelayBelowMinimum.selector, invalidDelay, minimum)
+        );
+        new DeepstateGovernor(
+            IVotes(address(vault)),
+            GOVERNANCE_START_DELAY,
+            invalidDelay,
+            VOTING_PERIOD,
+            PROPOSAL_THRESHOLD_NUMERATOR,
+            QUORUM_NUMERATOR,
+            VOTE_EXTENSION
+        );
+
+        vm.prank(address(governor));
+        governor.setVotingDelay(minimum);
+        assertEq(governor.votingDelay(), minimum);
+
+        vm.prank(address(governor));
+        vm.expectRevert(
+            abi.encodeWithSelector(DeepstateGovernor.VotingDelayBelowMinimum.selector, invalidDelay, minimum)
+        );
+        governor.setVotingDelay(invalidDelay);
+        assertEq(governor.votingDelay(), minimum);
+    }
+
+    function testLateQuorumExtensionMaximumAppliesAtDeploymentAndGovernanceUpdates() public {
+        uint48 maximum = governor.MAX_LATE_QUORUM_VOTE_EXTENSION();
+        DeepstateGovernor boundaryGovernor = new DeepstateGovernor(
+            IVotes(address(vault)),
+            GOVERNANCE_START_DELAY,
+            VOTING_DELAY,
+            VOTING_PERIOD,
+            PROPOSAL_THRESHOLD_NUMERATOR,
+            QUORUM_NUMERATOR,
+            maximum
+        );
+        assertEq(boundaryGovernor.lateQuorumVoteExtension(), maximum);
+
+        uint48 invalidExtension = maximum + 1;
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeepstateGovernor.LateQuorumVoteExtensionAboveMaximum.selector, invalidExtension, maximum
+            )
+        );
+        new DeepstateGovernor(
+            IVotes(address(vault)),
+            GOVERNANCE_START_DELAY,
+            VOTING_DELAY,
+            VOTING_PERIOD,
+            PROPOSAL_THRESHOLD_NUMERATOR,
+            QUORUM_NUMERATOR,
+            invalidExtension
+        );
+
+        vm.prank(address(governor));
+        governor.setLateQuorumVoteExtension(maximum);
+        assertEq(governor.lateQuorumVoteExtension(), maximum);
+
+        vm.prank(address(governor));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeepstateGovernor.LateQuorumVoteExtensionAboveMaximum.selector, invalidExtension, maximum
+            )
+        );
+        governor.setLateQuorumVoteExtension(invalidExtension);
+        assertEq(governor.lateQuorumVoteExtension(), maximum);
+    }
+
+    function testVotingPeriodMaximumAppliesAtDeploymentAndGovernanceUpdates() public {
+        uint32 maximum = governor.MAX_VOTING_PERIOD();
+        DeepstateGovernor boundaryGovernor = new DeepstateGovernor(
+            IVotes(address(vault)),
+            GOVERNANCE_START_DELAY,
+            VOTING_DELAY,
+            maximum,
+            PROPOSAL_THRESHOLD_NUMERATOR,
+            QUORUM_NUMERATOR,
+            VOTE_EXTENSION
+        );
+        assertEq(boundaryGovernor.votingPeriod(), maximum);
+
+        uint32 invalidPeriod = maximum + 1;
+        vm.expectRevert(
+            abi.encodeWithSelector(DeepstateGovernor.VotingPeriodAboveMaximum.selector, invalidPeriod, maximum)
+        );
+        new DeepstateGovernor(
+            IVotes(address(vault)),
+            GOVERNANCE_START_DELAY,
+            VOTING_DELAY,
+            invalidPeriod,
+            PROPOSAL_THRESHOLD_NUMERATOR,
+            QUORUM_NUMERATOR,
+            VOTE_EXTENSION
+        );
+
+        vm.prank(address(governor));
+        governor.setVotingPeriod(maximum);
+        assertEq(governor.votingPeriod(), maximum);
+
+        vm.prank(address(governor));
+        vm.expectRevert(
+            abi.encodeWithSelector(DeepstateGovernor.VotingPeriodAboveMaximum.selector, invalidPeriod, maximum)
+        );
+        governor.setVotingPeriod(invalidPeriod);
+        assertEq(governor.votingPeriod(), maximum);
+    }
+
+    function testProposalThresholdIsOneAtClockOrigin() public {
         vm.warp(0);
-        assertEq(governor.proposalThreshold(), 0);
+        assertEq(governor.proposalThreshold(), 1);
+    }
+
+    function testZeroSupplyEpochStillRequiresOnePastVoteToPropose() public {
+        _startGovernance();
+
+        valueToken.mint(address(vault), 1e6);
+        uint256 shares = vault.balanceOf(alice);
+        vm.prank(alice);
+        vault.redeemValue(shares, alice, alice);
+        vm.warp(vm.getBlockTimestamp() + 1);
+
+        assertEq(vault.totalSupply(), 0);
+        assertEq(governor.proposalThreshold(), 1);
+
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas, string memory description) =
+            _proposal(address(vault), abi.encodeCall(Ownable.transferOwnership, (newVaultOwner)), "zero supply");
+
+        vm.prank(bob);
+        vm.expectRevert(
+            abi.encodeWithSelector(IGovernor.GovernorInsufficientProposerVotes.selector, bob, uint256(0), uint256(1))
+        );
+        governor.propose(targets, values, calldatas, description);
     }
 
     function testProposalCreationIsBlockedUntilExactGovernanceStart() public {
@@ -200,6 +385,28 @@ contract DeepstateGovernanceTest is Test {
         assertEq(governor.proposalThreshold(), 2e18);
     }
 
+    function testQuorumHasOneStateFloorAcrossZeroAndDustSupplyEpochs() public {
+        _startGovernance();
+
+        valueToken.mint(address(vault), 1e6);
+        uint256 shares = vault.balanceOf(alice);
+        vm.prank(alice);
+        vault.redeemValue(shares, alice, alice);
+        vm.warp(vm.getBlockTimestamp() + 1);
+
+        uint256 zeroSupplyTimepoint = governor.clock() - 1;
+        assertEq(vault.getPastTotalSupply(zeroSupplyTimepoint), 0);
+        assertEq(governor.quorum(zeroSupplyTimepoint), governor.MINIMUM_QUORUM());
+
+        vm.prank(bob);
+        vault.deposit(1, bob);
+        vm.warp(vm.getBlockTimestamp() + 1);
+
+        uint256 dustSupplyTimepoint = governor.clock() - 1;
+        assertEq(vault.getPastTotalSupply(dustSupplyTimepoint), 1);
+        assertEq(governor.quorum(dustSupplyTimepoint), governor.MINIMUM_QUORUM());
+    }
+
     function testProposalThresholdFractionCanOnlyBeChangedThroughGovernance() public {
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(IGovernor.GovernorOnlyExecutor.selector, alice));
@@ -230,6 +437,60 @@ contract DeepstateGovernanceTest is Test {
         vm.prank(address(governor));
         vm.expectRevert(DeepstateGovernor.AbsoluteProposalThresholdUnsupported.selector);
         governor.setProposalThreshold(1e18);
+    }
+
+    function testGovernanceFractionsCannotBeZeroAtDeploymentOrUpdates() public {
+        uint256 proposalDenominator = governor.PROPOSAL_THRESHOLD_DENOMINATOR();
+        uint256 quorumDenominator = governor.quorumDenominator();
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeepstateGovernor.InvalidProposalThresholdFraction.selector, uint256(0), proposalDenominator
+            )
+        );
+        new DeepstateGovernor(
+            IVotes(address(vault)),
+            GOVERNANCE_START_DELAY,
+            VOTING_DELAY,
+            VOTING_PERIOD,
+            0,
+            QUORUM_NUMERATOR,
+            VOTE_EXTENSION
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                GovernorVotesQuorumFraction.GovernorInvalidQuorumFraction.selector, uint256(0), quorumDenominator
+            )
+        );
+        new DeepstateGovernor(
+            IVotes(address(vault)),
+            GOVERNANCE_START_DELAY,
+            VOTING_DELAY,
+            VOTING_PERIOD,
+            PROPOSAL_THRESHOLD_NUMERATOR,
+            0,
+            VOTE_EXTENSION
+        );
+
+        vm.prank(address(governor));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeepstateGovernor.InvalidProposalThresholdFraction.selector, uint256(0), proposalDenominator
+            )
+        );
+        governor.updateProposalThresholdNumerator(0);
+
+        vm.prank(address(governor));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                GovernorVotesQuorumFraction.GovernorInvalidQuorumFraction.selector, uint256(0), quorumDenominator
+            )
+        );
+        governor.updateQuorumNumerator(0);
+
+        assertEq(governor.proposalThresholdNumerator(), PROPOSAL_THRESHOLD_NUMERATOR);
+        assertEq(governor.quorumNumerator(), QUORUM_NUMERATOR);
     }
 
     function testVaultSharesBackGovernorOwnershipOfVault() public {

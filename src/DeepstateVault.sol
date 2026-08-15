@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {ERC20Votes} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Votes.sol";
 import {ERC4626} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
@@ -30,6 +31,7 @@ contract DeepstateVault is ERC4626, ERC20Votes, Ownable, ReentrancyGuard {
 
     /// @notice Fixed price for purchasing the vault's listed non-USDG fee balances.
     uint256 public constant FEE_PURCHASE_PRICE = 10_000e6;
+    uint8 public constant VALUE_TOKEN_DECIMALS = 6;
 
     address public immutable depositToken;
     address public immutable valueToken;
@@ -58,8 +60,12 @@ contract DeepstateVault is ERC4626, ERC20Votes, Ownable, ReentrancyGuard {
     error InsufficientRedeemableAssets();
     error InsufficientFeeAssets();
     error ArrayLengthMismatch();
+    error MinimumAmountsRequired();
     error MinimumAssetAmountNotMet(address token, uint256 amount, uint256 minimum);
     error InvalidFeePayment();
+    error InvalidValueTokenDecimals(uint8 actualDecimals);
+    error MinimumSharesNotMet(uint256 shares, uint256 minimum);
+    error MaximumAssetsExceeded(uint256 assets, uint256 maximum);
 
     constructor(address owner_, address depositToken_, address valueToken_, string memory name_, string memory symbol_)
         ERC20(name_, symbol_)
@@ -70,6 +76,8 @@ contract DeepstateVault is ERC4626, ERC20Votes, Ownable, ReentrancyGuard {
         if (depositToken_ == address(0) || valueToken_ == address(0)) {
             revert ZeroAddress();
         }
+        uint8 valueTokenDecimals = IERC20Metadata(valueToken_).decimals();
+        if (valueTokenDecimals != VALUE_TOKEN_DECIMALS) revert InvalidValueTokenDecimals(valueTokenDecimals);
 
         depositToken = depositToken_;
         valueToken = valueToken_;
@@ -128,14 +136,21 @@ contract DeepstateVault is ERC4626, ERC20Votes, Ownable, ReentrancyGuard {
         emit ValueRedeemed(msg.sender, receiver, owner, shares, valueAssets);
     }
 
+    /// @notice Deprecated unsafe redemption interface. Use the overload with per-asset minimum amounts.
+    function redeemAssets(uint256, address, address, address[] calldata) external pure returns (uint256[] memory) {
+        revert MinimumAmountsRequired();
+    }
+
     /// @notice Burns STATE and pays a pro-rata share of each explicitly listed vault asset.
     /// @dev Use address(0) for native ETH. DEEP and STATE cannot be redeemed through this path.
     /// All payouts use pre-burn balances and supply; omitted assets remain in the vault.
-    function redeemAssets(uint256 shares, address receiver, address owner, address[] calldata tokens)
-        external
-        nonReentrant
-        returns (uint256[] memory assets)
-    {
+    function redeemAssets(
+        uint256 shares,
+        address receiver,
+        address owner,
+        address[] calldata tokens,
+        uint256[] calldata minimumAmounts
+    ) external nonReentrant returns (uint256[] memory assets) {
         if (shares == 0) revert ZeroShares();
         if (receiver == address(0)) revert ZeroAddress();
 
@@ -144,6 +159,7 @@ contract DeepstateVault is ERC4626, ERC20Votes, Ownable, ReentrancyGuard {
 
         uint256 length = tokens.length;
         if (length == 0) revert EmptyAssetList();
+        if (minimumAmounts.length != length) revert ArrayLengthMismatch();
 
         uint256 supply = totalSupply();
         uint256 marker = _nextAssetListCallMarker();
@@ -155,6 +171,9 @@ contract DeepstateVault is ERC4626, ERC20Votes, Ownable, ReentrancyGuard {
             _validateListedAsset(token, marker);
 
             uint256 amount = shares.mulDiv(_vaultBalance(token), supply);
+            uint256 minimum = minimumAmounts[i];
+            if (amount < minimum) revert MinimumAssetAmountNotMet(token, amount, minimum);
+
             assets[i] = amount;
             if (amount != 0) hasAssets = true;
         }
@@ -226,6 +245,26 @@ contract DeepstateVault is ERC4626, ERC20Votes, Ownable, ReentrancyGuard {
         }
 
         emit FeesPurchased(msg.sender, receiver, FEE_PURCHASE_PRICE);
+    }
+
+    /// @notice Deposits assets only if the live conversion mints at least `minShares`.
+    function deposit(uint256 assets, address receiver, uint256 minShares) public returns (uint256 shares) {
+        uint256 maxAssets = maxDeposit(receiver);
+        if (assets > maxAssets) revert ERC4626ExceededMaxDeposit(receiver, assets, maxAssets);
+
+        shares = previewDeposit(assets);
+        if (shares < minShares) revert MinimumSharesNotMet(shares, minShares);
+        _deposit(_msgSender(), receiver, assets, shares);
+    }
+
+    /// @notice Mints shares only if the live conversion consumes at most `maxAssets`.
+    function mint(uint256 shares, address receiver, uint256 maxAssets) public returns (uint256 assets) {
+        uint256 maxShares = maxMint(receiver);
+        if (shares > maxShares) revert ERC4626ExceededMaxMint(receiver, shares, maxShares);
+
+        assets = previewMint(shares);
+        if (assets > maxAssets) revert MaximumAssetsExceeded(assets, maxAssets);
+        _deposit(_msgSender(), receiver, assets, shares);
     }
 
     /// @dev Strict ERC-4626 withdrawal would return the deposit asset, which is burned here.
@@ -308,6 +347,8 @@ contract DeepstateVault is ERC4626, ERC20Votes, Ownable, ReentrancyGuard {
     }
 
     function _update(address from, address to, uint256 value) internal override(ERC20, ERC20Votes) {
+        if (to == address(this) && value != 0) revert ProtectedToken();
+
         super._update(from, to, value);
 
         if (to == address(0) && totalSupply() == 0) {
