@@ -311,6 +311,45 @@ contract DeepstateGovernanceTest is Test {
         assertEq(governor.votingPeriod(), maximum);
     }
 
+    function testVotingPeriodMinimumAppliesAtDeploymentAndGovernanceUpdates() public {
+        uint32 minimum = governor.MIN_VOTING_PERIOD();
+        DeepstateGovernor boundaryGovernor = new DeepstateGovernor(
+            IVotes(address(vault)),
+            GOVERNANCE_START_DELAY,
+            VOTING_DELAY,
+            minimum,
+            PROPOSAL_THRESHOLD_NUMERATOR,
+            QUORUM_NUMERATOR,
+            VOTE_EXTENSION
+        );
+        assertEq(boundaryGovernor.votingPeriod(), minimum);
+
+        uint32 invalidPeriod = minimum - 1;
+        vm.expectRevert(
+            abi.encodeWithSelector(DeepstateGovernor.VotingPeriodBelowMinimum.selector, invalidPeriod, minimum)
+        );
+        new DeepstateGovernor(
+            IVotes(address(vault)),
+            GOVERNANCE_START_DELAY,
+            VOTING_DELAY,
+            invalidPeriod,
+            PROPOSAL_THRESHOLD_NUMERATOR,
+            QUORUM_NUMERATOR,
+            VOTE_EXTENSION
+        );
+
+        vm.prank(address(governor));
+        governor.setVotingPeriod(minimum);
+        assertEq(governor.votingPeriod(), minimum);
+
+        vm.prank(address(governor));
+        vm.expectRevert(
+            abi.encodeWithSelector(DeepstateGovernor.VotingPeriodBelowMinimum.selector, invalidPeriod, minimum)
+        );
+        governor.setVotingPeriod(invalidPeriod);
+        assertEq(governor.votingPeriod(), minimum);
+    }
+
     function testProposalThresholdIsOneAtClockOrigin() public {
         vm.warp(0);
         assertEq(governor.proposalThreshold(), 1);

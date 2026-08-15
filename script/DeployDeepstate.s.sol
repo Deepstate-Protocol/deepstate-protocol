@@ -23,6 +23,7 @@ contract DeployDeepstate is Script {
     uint256 internal constant MIN_QUANTITY_GROWTH = 1_000;
     uint48 internal constant MIN_VOTING_DELAY = 1 days;
     uint48 internal constant MAX_VOTING_DELAY = 30 days;
+    uint32 internal constant MIN_VOTING_PERIOD = 1 days;
     uint32 internal constant MAX_VOTING_PERIOD = 30 days;
     uint48 internal constant MAX_VOTE_EXTENSION = 7 days;
     uint256 internal constant GOVERNANCE_PERCENT_DENOMINATOR = 100;
@@ -296,7 +297,7 @@ contract DeployDeepstate is Script {
         if (governance.votingDelay < MIN_VOTING_DELAY || governance.votingDelay > MAX_VOTING_DELAY) {
             revert InvalidConfig("governance.votingDelay");
         }
-        if (governance.votingPeriod == 0 || governance.votingPeriod > MAX_VOTING_PERIOD) {
+        if (governance.votingPeriod < MIN_VOTING_PERIOD || governance.votingPeriod > MAX_VOTING_PERIOD) {
             revert InvalidConfig("governance.votingPeriod");
         }
         if (

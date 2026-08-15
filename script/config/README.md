@@ -52,7 +52,7 @@ All time values are seconds and use STATE's timestamp clock.
 
 - `startDelay` is the bootstrap period before proposals can be created.
 - `votingDelay` must be from 1 through 30 days.
-- `votingPeriod` must be nonzero and no more than 30 days.
+- `votingPeriod` must be from 1 through 30 days.
 - `proposalThresholdNumerator` and `quorumNumerator` are percentages over 100;
   each must be from 1 through 100.
 - `voteExtension` may be zero and cannot exceed 7 days.

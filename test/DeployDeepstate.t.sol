@@ -327,6 +327,11 @@ contract DeployDeepstateTest is DeployDeepstate, Test {
         this.validateForTest(config, address(this));
 
         config.governance.votingDelay = 3 days;
+        config.governance.votingPeriod = 1 days - 1;
+        vm.expectRevert(abi.encodeWithSelector(InvalidConfig.selector, "governance.votingPeriod"));
+        this.validateForTest(config, address(this));
+
+        config.governance.votingPeriod = 7 days;
         config.rewarder.marketMaxQuantity = config.rewarder.marketStartQuantity * 999;
         vm.expectRevert(abi.encodeWithSelector(InvalidConfig.selector, "rewarder.marketQuantity"));
         this.validateForTest(config, address(this));
