@@ -28,6 +28,7 @@ contract DeepstateGovernor is
     uint48 public constant MAX_VOTING_DELAY = 30 days;
     uint48 public constant MAX_LATE_QUORUM_VOTE_EXTENSION = 7 days;
     uint32 public constant MAX_VOTING_PERIOD = 30 days;
+    uint256 public constant MINIMUM_QUORUM = 1e18;
 
     uint48 public immutable governanceStart;
 
@@ -137,7 +138,7 @@ contract DeepstateGovernor is
     }
 
     function quorum(uint256 timepoint) public view override(Governor, GovernorVotesQuorumFraction) returns (uint256) {
-        return super.quorum(timepoint);
+        return Math.max(super.quorum(timepoint), MINIMUM_QUORUM);
     }
 
     function proposalDeadline(uint256 proposalId)

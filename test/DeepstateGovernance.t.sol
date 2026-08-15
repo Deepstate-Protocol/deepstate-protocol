@@ -343,6 +343,28 @@ contract DeepstateGovernanceTest is Test {
         assertEq(governor.proposalThreshold(), 2e18);
     }
 
+    function testQuorumHasOneStateFloorAcrossZeroAndDustSupplyEpochs() public {
+        _startGovernance();
+
+        valueToken.mint(address(vault), 1e6);
+        uint256 shares = vault.balanceOf(alice);
+        vm.prank(alice);
+        vault.redeemValue(shares, alice, alice);
+        vm.warp(vm.getBlockTimestamp() + 1);
+
+        uint256 zeroSupplyTimepoint = governor.clock() - 1;
+        assertEq(vault.getPastTotalSupply(zeroSupplyTimepoint), 0);
+        assertEq(governor.quorum(zeroSupplyTimepoint), governor.MINIMUM_QUORUM());
+
+        vm.prank(bob);
+        vault.deposit(1, bob);
+        vm.warp(vm.getBlockTimestamp() + 1);
+
+        uint256 dustSupplyTimepoint = governor.clock() - 1;
+        assertEq(vault.getPastTotalSupply(dustSupplyTimepoint), 1);
+        assertEq(governor.quorum(dustSupplyTimepoint), governor.MINIMUM_QUORUM());
+    }
+
     function testProposalThresholdFractionCanOnlyBeChangedThroughGovernance() public {
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(IGovernor.GovernorOnlyExecutor.selector, alice));
