@@ -191,8 +191,7 @@ contract DeepstateRewarderFactory is Ownable {
         delete activeRewarder[poolId_];
         delete rewarderPool[rewarder];
 
-        burnedAmount = rewardToken.balanceOf(rewarder);
-        DeepstateRewarderV2(rewarder).burnBalance(burnedAmount);
+        burnedAmount = DeepstateRewarderV2(rewarder).burnBalance();
 
         emit MarketRemoved(poolId_, rewarder, burnedAmount);
     }

@@ -271,13 +271,31 @@ contract DeepstateRewarderFactoryTest is Test {
         assertEq(deep.totalSupply(), 30_000_000e18);
     }
 
+    function test_RemovalBurnsLiveBalanceAfterPriorClaim() public {
+        vm.prank(controller);
+        DeepstateRewarderV2 rewarder = factory.deployMarket(_market(TOKEN_A, TOKEN_B));
+        uint256 claimed = 25_000_000e18;
+
+        vm.prank(address(rewarder));
+        deep.transfer(alice, claimed);
+
+        vm.prank(controller);
+        uint256 burned = factory.removeMarket(TOKEN_A, TOKEN_B);
+
+        assertEq(burned, 75_000_000e18);
+        assertEq(deep.balanceOf(address(rewarder)), 0);
+        assertEq(deep.balanceOf(alice), claimed);
+        assertEq(deep.balanceOf(address(sablier)), 30_000_000e18);
+        assertEq(deep.totalSupply(), 55_000_000e18);
+    }
+
     function test_ControllerCannotBurnRewarderDirectly() public {
         vm.prank(controller);
         DeepstateRewarderV2 rewarder = factory.deployMarket(_market(TOKEN_A, TOKEN_B));
 
         vm.expectRevert(Ownable.Unauthorized.selector);
         vm.prank(controller);
-        rewarder.burnBalance(1);
+        rewarder.burnBalance();
 
         assertEq(deep.balanceOf(address(rewarder)), 100_000_000e18);
         assertEq(deep.balanceOf(controller), 0);

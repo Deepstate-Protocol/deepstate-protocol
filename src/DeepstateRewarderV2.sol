@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
 import {DeepstateRewarder} from "./DeepstateRewarder.sol";
 import {IBurnableERC20} from "./interfaces/IBurnableERC20.sol";
 
@@ -40,9 +42,10 @@ contract DeepstateRewarderV2 is DeepstateRewarder {
         )
     {}
 
-    /// @notice Burn an amount of the reward token held by this rewarder.
+    /// @notice Burn the rewarder's entire remaining reward-token balance.
     /// @dev Outstanding claims remain accounted for and will revert until funding is restored.
-    function burnBalance(uint256 amount) external onlyOwner {
+    function burnBalance() external onlyOwner returns (uint256 amount) {
+        amount = IERC20(rewardToken).balanceOf(address(this));
         IBurnableERC20(rewardToken).burn(amount);
         emit RewardBalanceBurned(amount);
     }

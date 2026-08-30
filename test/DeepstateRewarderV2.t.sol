@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 import {Test} from "forge-std/Test.sol";
 import {Ownable} from "solady/auth/Ownable.sol";
 
@@ -47,16 +46,16 @@ contract DeepstateRewarderV2Test is Test {
         assertEq(rewarder.sideEmissionCap(), SIDE_CAP);
     }
 
-    function test_OwnerCanBurnRequestedRewardBalance() public {
+    function test_OwnerCanBurnEntireLiveRewardBalance() public {
         uint256 funding = rewardToken.balanceOf(address(rewarder));
-        uint256 amount = funding / 4;
 
         vm.expectEmit(false, false, false, true, address(rewarder));
-        emit DeepstateRewarderV2.RewardBalanceBurned(amount);
-        rewarder.burnBalance(amount);
+        emit DeepstateRewarderV2.RewardBalanceBurned(funding);
+        uint256 burned = rewarder.burnBalance();
 
-        assertEq(rewardToken.balanceOf(address(rewarder)), funding - amount);
-        assertEq(rewardToken.totalSupply(), funding - amount);
+        assertEq(burned, funding);
+        assertEq(rewardToken.balanceOf(address(rewarder)), 0);
+        assertEq(rewardToken.totalSupply(), 0);
     }
 
     function test_NonOwnerCannotBurnRewardBalance() public {
@@ -64,30 +63,23 @@ contract DeepstateRewarderV2Test is Test {
 
         vm.expectRevert(Ownable.Unauthorized.selector);
         vm.prank(alice);
-        rewarder.burnBalance(1);
+        rewarder.burnBalance();
 
         assertEq(rewardToken.balanceOf(address(rewarder)), fundingBefore);
         assertEq(rewardToken.totalSupply(), fundingBefore);
     }
 
-    function test_BurnBalanceRejectsAmountAboveBalance() public {
+    function test_BurnBalanceReturnsZeroForEmptyRewarder() public {
         uint256 funding = rewardToken.balanceOf(address(rewarder));
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IERC20Errors.ERC20InsufficientBalance.selector, address(rewarder), funding, funding + 1
-            )
-        );
-        rewarder.burnBalance(funding + 1);
-    }
-
-    function test_BurnBalanceAcceptsZeroAmount() public {
-        uint256 funding = rewardToken.balanceOf(address(rewarder));
+        rewarder.burnBalance();
 
         vm.expectEmit(false, false, false, true, address(rewarder));
         emit DeepstateRewarderV2.RewardBalanceBurned(0);
-        rewarder.burnBalance(0);
+        uint256 burned = rewarder.burnBalance();
 
-        assertEq(rewardToken.balanceOf(address(rewarder)), funding);
-        assertEq(rewardToken.totalSupply(), funding);
+        assertEq(burned, 0);
+        assertEq(funding, uint256(SIDE_CAP) * 2);
+        assertEq(rewardToken.balanceOf(address(rewarder)), 0);
+        assertEq(rewardToken.totalSupply(), 0);
     }
 }
