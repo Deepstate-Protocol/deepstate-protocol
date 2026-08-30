@@ -93,7 +93,7 @@ contract DeepstateRewarderFactory is Ownable {
     }
 
     modifier onlyOperatorOrOwner() {
-        _checkOperatorOrOwner();
+        if (msg.sender != operator) _checkOwner();
         _;
     }
 
@@ -182,9 +182,5 @@ contract DeepstateRewarderFactory is Ownable {
     function _poolId(address token0, address token1) private pure returns (bytes32 poolId_) {
         if (token0 >= token1) revert InvalidPool();
         poolId_ = keccak256(abi.encode(token0, token1));
-    }
-
-    function _checkOperatorOrOwner() private view {
-        if (msg.sender != operator) _checkOwner();
     }
 }
