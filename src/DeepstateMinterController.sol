@@ -22,8 +22,8 @@ contract DeepstateMinterController is AccessControl, Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
-    uint256 public constant RECIPIENT_ALLOCATION_BPS = 3_000;
-    uint256 public constant BPS_DENOMINATOR = 10_000;
+    uint256 public constant RECIPIENT_ALLOCATION_BPS = 30_00;
+    uint256 public constant BPS_DENOMINATOR = 100_00;
     uint40 public constant VESTING_DURATION = 365 days;
     uint40 public constant TOKEN_ADMINISTRATION_DURATION = 2 * 365 days;
 

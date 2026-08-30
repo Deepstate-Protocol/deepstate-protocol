@@ -37,8 +37,8 @@ contract DeepstateMinterControllerTest is Test {
         assertEq(address(minterController.sablierLockup()), address(sablier));
         assertEq(minterController.recipient(), recipient);
         assertEq(minterController.mintCap(), MINT_CAP);
-        assertEq(minterController.RECIPIENT_ALLOCATION_BPS(), 3_000);
-        assertEq(minterController.BPS_DENOMINATOR(), 10_000);
+        assertEq(minterController.RECIPIENT_ALLOCATION_BPS(), 30_00);
+        assertEq(minterController.BPS_DENOMINATOR(), 100_00);
         assertEq(minterController.VESTING_DURATION(), 365 days);
         assertEq(minterController.TOKEN_ADMINISTRATION_DURATION(), 2 * 365 days);
         assertEq(minterController.owner(), address(this));
@@ -391,8 +391,8 @@ contract DeepstateMinterControllerTest is Test {
     }
 
     function test_RevertWhenVestingAmountExceedsSablierUint128Limit() public {
-        uint256 amount = Math.mulDiv(uint256(type(uint128).max) + 1, 10_000, 3_000, Math.Rounding.Ceil);
-        uint256 vestingAmount = Math.mulDiv(amount, 3_000, 10_000);
+        uint256 amount = Math.mulDiv(uint256(type(uint128).max) + 1, 100_00, 30_00, Math.Rounding.Ceil);
+        uint256 vestingAmount = Math.mulDiv(amount, 30_00, 100_00);
 
         vm.expectRevert(abi.encodeWithSelector(DeepstateMinterController.VestingAmountTooLarge.selector, vestingAmount));
         minterController.mint(mintRecipient, amount);
@@ -452,9 +452,9 @@ contract DeepstateMinterControllerTest is Test {
     }
 
     function testFuzz_MintAlwaysCreatesExactAdditionalAllocation(uint128 rawAmount) public {
-        uint256 maximumAmount = Math.mulDiv(MINT_CAP, 10_000, 13_000);
+        uint256 maximumAmount = Math.mulDiv(MINT_CAP, 100_00, 130_00);
         uint256 amount = bound(uint256(rawAmount), 4, maximumAmount);
-        uint256 expectedVesting = Math.mulDiv(amount, 3_000, 10_000);
+        uint256 expectedVesting = Math.mulDiv(amount, 30_00, 100_00);
 
         uint256 streamId = minterController.mint(mintRecipient, amount);
 
