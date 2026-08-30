@@ -3,19 +3,12 @@ pragma solidity 0.8.28;
 
 import {Ownable} from "solady/auth/Ownable.sol";
 
-interface IDeepstateRouterAdmin {
-    function owner() external view returns (address);
-    function poolHook(bytes32 poolId) external view returns (address);
-    function setPoolHookConfig(address token0, address token1, address hook, bool token0Active, bool token1Active)
-        external;
-    function setFeeConfig(address recipient, uint16 bps) external;
-    function transferOwnership(address newOwner) external payable;
-}
+import {IDeepstateV1} from "./interfaces/IDeepstateV1.sol";
 
-/// @title Deepstate Router Controller
+/// @title Deepstate V1 Controller
 /// @notice Governance-owned capability boundary around the single-owner Deepstate router.
-contract DeepstateRouterController is Ownable {
-    IDeepstateRouterAdmin public immutable deepstate;
+contract DeepstateV1Controller is Ownable {
+    IDeepstateV1 public immutable deepstate;
 
     /// @notice Revocable contract permitted only to configure pool hooks.
     address public hookManager;
@@ -32,7 +25,7 @@ contract DeepstateRouterController is Ownable {
         if (deepstate_ == address(0) || deepstate_.code.length == 0) revert InvalidDeepstate();
 
         _initializeOwner(owner_);
-        deepstate = IDeepstateRouterAdmin(deepstate_);
+        deepstate = IDeepstateV1(deepstate_);
     }
 
     modifier onlyHookManagerOrOwner() {

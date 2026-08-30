@@ -5,14 +5,14 @@ import {Test} from "forge-std/Test.sol";
 import {Ownable} from "solady/auth/Ownable.sol";
 import {DeepstateV1} from "deepstate-contracts/DeepstateV1.sol";
 
-import {DeepstateRouterController} from "../src/DeepstateRouterController.sol";
+import {DeepstateV1Controller} from "../src/DeepstateV1Controller.sol";
 
-contract DeepstateRouterControllerTest is Test {
+contract DeepstateV1ControllerTest is Test {
     address internal constant TOKEN0 = address(0x1000);
     address internal constant TOKEN1 = address(0x2000);
 
     DeepstateV1 internal deepstate;
-    DeepstateRouterController internal controller;
+    DeepstateV1Controller internal controller;
 
     address internal hookManager = makeAddr("hookManager");
     address internal hook = makeAddr("hook");
@@ -21,7 +21,7 @@ contract DeepstateRouterControllerTest is Test {
 
     function setUp() public {
         deepstate = new DeepstateV1();
-        controller = new DeepstateRouterController(address(this), address(deepstate));
+        controller = new DeepstateV1Controller(address(this), address(deepstate));
         deepstate.transferOwnership(address(controller));
     }
 
@@ -33,24 +33,24 @@ contract DeepstateRouterControllerTest is Test {
     }
 
     function test_ConstructorValidation() public {
-        vm.expectRevert(DeepstateRouterController.InvalidOwner.selector);
-        new DeepstateRouterController(address(0), address(deepstate));
+        vm.expectRevert(DeepstateV1Controller.InvalidOwner.selector);
+        new DeepstateV1Controller(address(0), address(deepstate));
 
-        vm.expectRevert(DeepstateRouterController.InvalidDeepstate.selector);
-        new DeepstateRouterController(address(this), address(0));
+        vm.expectRevert(DeepstateV1Controller.InvalidDeepstate.selector);
+        new DeepstateV1Controller(address(this), address(0));
 
-        vm.expectRevert(DeepstateRouterController.InvalidDeepstate.selector);
-        new DeepstateRouterController(address(this), alice);
+        vm.expectRevert(DeepstateV1Controller.InvalidDeepstate.selector);
+        new DeepstateV1Controller(address(this), alice);
     }
 
     function test_GovernanceCanSetAndRevokeHookManager() public {
         vm.expectEmit(true, true, false, false, address(controller));
-        emit DeepstateRouterController.HookManagerSet(address(0), hookManager);
+        emit DeepstateV1Controller.HookManagerSet(address(0), hookManager);
         controller.setHookManager(hookManager);
         assertEq(controller.hookManager(), hookManager);
 
         vm.expectEmit(true, true, false, false, address(controller));
-        emit DeepstateRouterController.HookManagerSet(hookManager, address(0));
+        emit DeepstateV1Controller.HookManagerSet(hookManager, address(0));
         controller.setHookManager(address(0));
         assertEq(controller.hookManager(), address(0));
     }
@@ -118,7 +118,7 @@ contract DeepstateRouterControllerTest is Test {
 
     function test_GovernanceCanConfigureFeesAndRecoverRouterOwnership() public {
         vm.expectEmit(true, false, false, true, address(controller));
-        emit DeepstateRouterController.DeepstateFeeConfigured(feeRecipient, 10);
+        emit DeepstateV1Controller.DeepstateFeeConfigured(feeRecipient, 10);
         controller.setDeepstateFeeConfig(feeRecipient, 10);
 
         (address recipient, uint16 bps) = deepstate.feeConfig();
@@ -126,14 +126,14 @@ contract DeepstateRouterControllerTest is Test {
         assertEq(bps, 10);
 
         vm.expectEmit(true, false, false, false, address(controller));
-        emit DeepstateRouterController.DeepstateOwnershipTransferred(alice);
+        emit DeepstateV1Controller.DeepstateOwnershipTransferred(alice);
         controller.transferDeepstateOwnership(alice);
         assertEq(deepstate.owner(), alice);
     }
 
     function test_ControllerCallsFailUntilItOwnsRouter() public {
         DeepstateV1 secondRouter = new DeepstateV1();
-        DeepstateRouterController secondController = new DeepstateRouterController(address(this), address(secondRouter));
+        DeepstateV1Controller secondController = new DeepstateV1Controller(address(this), address(secondRouter));
         secondController.setHookManager(hookManager);
 
         vm.expectRevert(Ownable.Unauthorized.selector);

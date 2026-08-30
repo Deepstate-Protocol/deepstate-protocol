@@ -10,7 +10,7 @@ import {DeepstateRewarder} from "../src/DeepstateRewarder.sol";
 import {DeepstateMinterController} from "../src/DeepstateMinterController.sol";
 import {DeepstateRewarderFactory} from "../src/DeepstateRewarderFactory.sol";
 import {DeepstateRewarderV2} from "../src/DeepstateRewarderV2.sol";
-import {DeepstateRouterController} from "../src/DeepstateRouterController.sol";
+import {DeepstateV1Controller} from "../src/DeepstateV1Controller.sol";
 import {DeepstateToken} from "../src/DeepstateToken.sol";
 import {IDeepstateMinterController} from "../src/interfaces/IDeepstateMinterController.sol";
 import {MockSablierLockupLinearV4} from "./mocks/MockSablierLockupLinearV4.sol";
@@ -43,7 +43,7 @@ contract DeepstateRewarderFactoryTest is Test {
 
     DeepstateToken internal deep;
     DeepstateV1 internal deepstate;
-    DeepstateRouterController internal routerController;
+    DeepstateV1Controller internal routerController;
     DeepstateMinterController internal minterController;
     DeepstateRewarderFactory internal factory;
     MockSablierLockupLinearV4 internal sablier;
@@ -58,7 +58,7 @@ contract DeepstateRewarderFactoryTest is Test {
         deep = new DeepstateToken(address(this), "Deepstate", "DEEP");
         sablier = new MockSablierLockupLinearV4();
         deepstate = new DeepstateV1();
-        routerController = new DeepstateRouterController(address(this), address(deepstate));
+        routerController = new DeepstateV1Controller(address(this), address(deepstate));
         minterController = _newMinterController(address(this), deep);
         factory = new DeepstateRewarderFactory(address(this), address(routerController), address(minterController));
 
@@ -98,7 +98,7 @@ contract DeepstateRewarderFactoryTest is Test {
         vm.expectRevert(DeepstateRewarderFactory.InvalidRouterController.selector);
         new DeepstateRewarderFactory(address(this), alice, address(minterController));
 
-        DeepstateRouterController mismatchedController = new DeepstateRouterController(alice, address(deepstate));
+        DeepstateV1Controller mismatchedController = new DeepstateV1Controller(alice, address(deepstate));
         vm.expectRevert(
             abi.encodeWithSelector(
                 DeepstateRewarderFactory.RouterControllerOwnerMismatch.selector, address(this), alice
@@ -131,8 +131,7 @@ contract DeepstateRewarderFactoryTest is Test {
         address governance = makeAddr("governance");
         DeepstateToken secondToken = new DeepstateToken(address(this), "Second", "SECOND");
         DeepstateV1 secondRouter = new DeepstateV1();
-        DeepstateRouterController secondRouterController =
-            new DeepstateRouterController(governance, address(secondRouter));
+        DeepstateV1Controller secondRouterController = new DeepstateV1Controller(governance, address(secondRouter));
         DeepstateMinterController secondMinterController = _newMinterController(governance, secondToken);
         DeepstateRewarderFactory secondFactory =
             new DeepstateRewarderFactory(governance, address(secondRouterController), address(secondMinterController));
@@ -351,8 +350,7 @@ contract DeepstateRewarderFactoryTest is Test {
         factory.deployMarket(config);
 
         DeepstateV1 secondRouter = new DeepstateV1();
-        DeepstateRouterController secondRouterController =
-            new DeepstateRouterController(address(this), address(secondRouter));
+        DeepstateV1Controller secondRouterController = new DeepstateV1Controller(address(this), address(secondRouter));
         DeepstateRewarderFactory secondFactory =
             new DeepstateRewarderFactory(address(this), address(secondRouterController), address(minterController));
         secondRouter.setPoolHookConfig(TOKEN_C, TOKEN_D, alice, true, false);
@@ -373,8 +371,7 @@ contract DeepstateRewarderFactoryTest is Test {
     function test_DeploymentWithoutMinterRoleRevertsAtomically() public {
         DeepstateToken secondToken = new DeepstateToken(address(this), "Second", "SECOND");
         DeepstateV1 secondRouter = new DeepstateV1();
-        DeepstateRouterController secondRouterController =
-            new DeepstateRouterController(address(this), address(secondRouter));
+        DeepstateV1Controller secondRouterController = new DeepstateV1Controller(address(this), address(secondRouter));
         DeepstateMinterController secondMinterController = _newMinterController(address(this), secondToken);
         DeepstateRewarderFactory secondFactory = new DeepstateRewarderFactory(
             address(this), address(secondRouterController), address(secondMinterController)
@@ -406,8 +403,7 @@ contract DeepstateRewarderFactoryTest is Test {
     function test_DeploymentWithoutRouterOwnershipRevertsAtomically() public {
         DeepstateToken secondToken = new DeepstateToken(address(this), "Second", "SECOND");
         DeepstateV1 secondRouter = new DeepstateV1();
-        DeepstateRouterController secondRouterController =
-            new DeepstateRouterController(address(this), address(secondRouter));
+        DeepstateV1Controller secondRouterController = new DeepstateV1Controller(address(this), address(secondRouter));
         DeepstateMinterController secondMinterController = _newMinterController(address(this), secondToken);
         DeepstateRewarderFactory secondFactory = new DeepstateRewarderFactory(
             address(this), address(secondRouterController), address(secondMinterController)
@@ -431,8 +427,7 @@ contract DeepstateRewarderFactoryTest is Test {
     function test_DeploymentWithoutDelegatedHookPermissionRevertsAtomically() public {
         DeepstateToken secondToken = new DeepstateToken(address(this), "Second", "SECOND");
         DeepstateV1 secondRouter = new DeepstateV1();
-        DeepstateRouterController secondRouterController =
-            new DeepstateRouterController(address(this), address(secondRouter));
+        DeepstateV1Controller secondRouterController = new DeepstateV1Controller(address(this), address(secondRouter));
         DeepstateMinterController secondMinterController = _newMinterController(address(this), secondToken);
         DeepstateRewarderFactory secondFactory = new DeepstateRewarderFactory(
             address(this), address(secondRouterController), address(secondMinterController)

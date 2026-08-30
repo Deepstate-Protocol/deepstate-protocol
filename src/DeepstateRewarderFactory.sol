@@ -4,9 +4,10 @@ pragma solidity 0.8.28;
 import {Ownable} from "solady/auth/Ownable.sol";
 
 import {DeepstateRewarderV2} from "./DeepstateRewarderV2.sol";
-import {DeepstateRouterController, IDeepstateRouterAdmin} from "./DeepstateRouterController.sol";
+import {DeepstateV1Controller} from "./DeepstateV1Controller.sol";
 import {DeepstateToken} from "./DeepstateToken.sol";
 import {IDeepstateMinterController} from "./interfaces/IDeepstateMinterController.sol";
+import {IDeepstateV1} from "./interfaces/IDeepstateV1.sol";
 
 /// @title Deepstate Rewarder Factory
 /// @notice Governance-owned CREATE2 factory for controller-launched market reward programs.
@@ -32,8 +33,8 @@ contract DeepstateRewarderFactory is Ownable {
     /// @notice Initial DEEP minted to each rewarder. Further funding requires governance.
     uint256 public constant INITIAL_FUNDING = 100_000_000e18;
 
-    DeepstateRouterController public immutable routerController;
-    IDeepstateRouterAdmin public immutable deepstate;
+    DeepstateV1Controller public immutable routerController;
+    IDeepstateV1 public immutable deepstate;
     IDeepstateMinterController public immutable minterController;
     DeepstateToken public immutable rewardToken;
 
@@ -84,7 +85,7 @@ contract DeepstateRewarderFactory is Ownable {
         }
 
         _initializeOwner(owner_);
-        routerController = DeepstateRouterController(routerController_);
+        routerController = DeepstateV1Controller(routerController_);
         address routerControllerOwner = routerController.owner();
         if (routerControllerOwner != owner_) {
             revert RouterControllerOwnerMismatch(owner_, routerControllerOwner);
