@@ -136,18 +136,17 @@ contract DeepstateMinterControllerTest is Test {
         minterController.activateTokenAdministration();
     }
 
-    function test_OwnerCanReturnTokenAdministrationEarlyWithoutAdminGap() public {
+    function test_OwnerCannotReturnTokenAdministrationBeforeDeadline() public {
         _activateSoleTokenAdministration();
+        uint40 endsAt = minterController.tokenAdministrationEndsAt();
 
-        vm.expectEmit(true, true, false, true, address(minterController));
-        emit DeepstateMinterController.TokenAdministrationReturned(address(this), address(this));
+        vm.expectRevert(abi.encodeWithSelector(DeepstateMinterController.TokenAdministrationActive.selector, endsAt));
         minterController.returnTokenAdministration();
 
-        assertTrue(minterController.tokenAdministrationReturned());
-        assertTrue(deep.hasRole(deep.DEFAULT_ADMIN_ROLE(), address(this)));
-        assertFalse(deep.hasRole(deep.DEFAULT_ADMIN_ROLE(), address(minterController)));
+        assertFalse(minterController.tokenAdministrationReturned());
+        assertFalse(deep.hasRole(deep.DEFAULT_ADMIN_ROLE(), address(this)));
+        assertTrue(deep.hasRole(deep.DEFAULT_ADMIN_ROLE(), address(minterController)));
         assertEq(deep.defaultAdminCount(), 1);
-        assertTrue(deep.hasRole(deep.MINTER_ROLE(), address(minterController)));
     }
 
     function test_AnyoneCanReturnTokenAdministrationAtExactDeadline() public {
@@ -176,13 +175,36 @@ contract DeepstateMinterControllerTest is Test {
         assertFalse(minterController.hasRole(minterController.DEFAULT_ADMIN_ROLE(), address(this)));
         assertTrue(minterController.hasRole(minterController.DEFAULT_ADMIN_ROLE(), newGovernance));
 
-        vm.prank(newGovernance);
+        vm.warp(minterController.tokenAdministrationEndsAt());
+        vm.prank(unauthorized);
         minterController.returnTokenAdministration();
 
         assertTrue(deep.hasRole(deep.DEFAULT_ADMIN_ROLE(), newGovernance));
         assertFalse(deep.hasRole(deep.DEFAULT_ADMIN_ROLE(), address(this)));
         assertFalse(deep.hasRole(deep.DEFAULT_ADMIN_ROLE(), address(minterController)));
         assertEq(deep.defaultAdminCount(), 1);
+    }
+
+    function test_OwnerMintAuthorityRotatesWithOwnership() public {
+        DeepstateMinterController ownerController =
+            new DeepstateMinterController(address(this), address(deep), address(sablier), recipient, MINT_CAP);
+        deep.grantRole(deep.MINTER_ROLE(), address(ownerController));
+
+        ownerController.mint(mintRecipient, 100e18);
+        ownerController.transferOwnership(newGovernance);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, address(this), ownerController.MINTER_ROLE()
+            )
+        );
+        ownerController.mint(mintRecipient, 100e18);
+
+        vm.prank(newGovernance);
+        ownerController.mint(mintRecipient, 100e18);
+
+        assertEq(deep.balanceOf(mintRecipient), 200e18);
+        assertEq(deep.balanceOf(address(sablier)), 60e18);
     }
 
     function test_TwoStepOwnershipHandoverSynchronizesControllerAdmin() public {
@@ -220,6 +242,7 @@ contract DeepstateMinterControllerTest is Test {
         vm.prank(address(minterController));
         deep.grantRole(tokenAdminRole, address(this));
         deep.revokeRole(tokenAdminRole, address(minterController));
+        vm.warp(minterController.tokenAdministrationEndsAt());
 
         vm.expectRevert(DeepstateMinterController.ControllerNotTokenAdmin.selector);
         minterController.returnTokenAdministration();

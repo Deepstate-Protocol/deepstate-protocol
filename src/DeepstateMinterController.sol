@@ -97,15 +97,15 @@ contract DeepstateMinterController is AccessControl, Ownable, ReentrancyGuard {
         emit TokenAdministrationActivated(endsAt);
     }
 
-    /// @notice Return DEEP administration to this contract's current governance owner.
-    /// @dev The owner may trigger an emergency return at any time. Anyone may trigger it after the term expires.
+    /// @notice Return DEEP administration to this contract's current governance owner after the term expires.
+    /// @dev Anyone may trigger the return at or after the exact deadline.
     function returnTokenAdministration() external {
         uint40 endsAt = tokenAdministrationEndsAt;
         if (endsAt == 0) revert TokenAdministrationNotActive();
         if (tokenAdministrationReturned) revert TokenAdministrationAlreadyReturned();
 
         address owner_ = owner();
-        if (msg.sender != owner_ && block.timestamp < endsAt) revert TokenAdministrationActive(endsAt);
+        if (block.timestamp < endsAt) revert TokenAdministrationActive(endsAt);
 
         bytes32 tokenAdminRole = rewardToken.DEFAULT_ADMIN_ROLE();
         if (!rewardToken.hasRole(tokenAdminRole, address(this))) revert ControllerNotTokenAdmin();
@@ -120,7 +120,7 @@ contract DeepstateMinterController is AccessControl, Ownable, ReentrancyGuard {
 
     /// @notice Mint `amount` DEEP to `to` and an additional 30% into a two-year recipient stream.
     /// @dev The 30% calculation rounds down. Amounts that round the stream allocation to zero revert.
-    function mint(address to, uint256 amount) external onlyRole(MINTER_ROLE) nonReentrant returns (uint256 streamId) {
+    function mint(address to, uint256 amount) external onlyMinterOrOwner nonReentrant returns (uint256 streamId) {
         if (to == address(0)) revert InvalidMintRecipient();
 
         uint256 vestingAmount = Math.mulDiv(amount, RECIPIENT_ALLOCATION_BPS, BPS_DENOMINATOR);
@@ -159,6 +159,11 @@ contract DeepstateMinterController is AccessControl, Ownable, ReentrancyGuard {
         if (balanceAfter != balanceBefore) revert StreamFundingMismatch(balanceBefore, balanceAfter);
 
         emit MintedWithVesting(msg.sender, to, amount, recipient, vestingAmount, streamId);
+    }
+
+    modifier onlyMinterOrOwner() {
+        if (msg.sender != owner()) _checkRole(MINTER_ROLE);
+        _;
     }
 
     /// @dev Keep EIP-173 ownership and AccessControl administration assigned to the same account.
