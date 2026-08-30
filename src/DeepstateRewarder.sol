@@ -254,6 +254,7 @@ contract DeepstateRewarder is Ownable, IHook {
     function execute(bytes32 poolId_, bytes32 bookId, address token, uint160 outgoingAmount, uint32 incomingOrderNonce)
         external
     {
+        _beforeRewarderAction();
         if (msg.sender != deepstate) revert NotDeepstate();
         if (poolId_ != poolId) revert InvalidPool();
 
@@ -296,12 +297,14 @@ contract DeepstateRewarder is Ownable, IHook {
     /// @notice Cache the engine-verified owner that may claim rewards for an order after it is deleted.
     /// @dev Anyone may register an active order, but the engine alone determines its claimant.
     function registerClaimant(bytes32 bookId, bytes32 order) external returns (address claimant) {
+        _beforeRewarderAction();
         return _resolveClaimant(bookId, order);
     }
 
     /// @notice Cache the same engine-verified claimant for multiple active orders.
     /// @dev Reverts atomically if the orders do not share one claimant.
     function registerClaimants(OrderReference[] calldata orders) external returns (address claimant) {
+        _beforeRewarderAction();
         uint256 length = orders.length;
         if (length == 0) revert EmptyBatch();
 
@@ -317,6 +320,7 @@ contract DeepstateRewarder is Ownable, IHook {
     /// @dev Lazily registers an active order. Register before cancellation to preserve claims after
     /// the engine permanently deletes ownership.
     function distributeRewards(bytes32 bookId, bytes32 order, address token) external {
+        _beforeRewarderAction();
         (address claimant, uint256 amount) = _accrueClaim(bookId, order, token);
         if (amount == 0) return;
 
@@ -328,6 +332,7 @@ contract DeepstateRewarder is Ownable, IHook {
     /// @dev Aggregates the batch into one reward-token transfer and reverts atomically if any
     /// resolved order belongs to a different claimant.
     function distributeRewardsBatch(RewardClaim[] calldata claims) external {
+        _beforeRewarderAction();
         uint256 length = claims.length;
         if (length == 0) revert EmptyBatch();
 
@@ -348,6 +353,10 @@ contract DeepstateRewarder is Ownable, IHook {
 
         if (totalAmount != 0) IERC20(rewardToken).safeTransfer(claimant, totalAmount);
     }
+
+    /// @dev Extension hook invoked before every state-changing rewarder entry point.
+    /// The base implementation deliberately does nothing so existing rewarder behavior is unchanged.
+    function _beforeRewarderAction() internal view virtual {}
 
     function _accrueClaim(bytes32 bookId, bytes32 order, address token)
         private
