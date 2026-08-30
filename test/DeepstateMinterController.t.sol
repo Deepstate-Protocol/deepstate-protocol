@@ -30,7 +30,6 @@ contract DeepstateMinterControllerTest is Test {
             new DeepstateMinterController(address(this), address(deep), address(sablier), recipient, MINT_CAP);
 
         deep.grantRole(deep.MINTER_ROLE(), address(minterController));
-        minterController.grantRole(minterController.MINTER_ROLE(), address(this));
     }
 
     function test_ImmutableConfigurationAndInitialAuthority() public view {
@@ -174,6 +173,8 @@ contract DeepstateMinterControllerTest is Test {
         assertEq(minterController.owner(), newGovernance);
         assertFalse(minterController.hasRole(minterController.DEFAULT_ADMIN_ROLE(), address(this)));
         assertTrue(minterController.hasRole(minterController.DEFAULT_ADMIN_ROLE(), newGovernance));
+        assertFalse(minterController.hasRole(minterController.MINTER_ROLE(), address(this)));
+        assertTrue(minterController.hasRole(minterController.MINTER_ROLE(), newGovernance));
 
         vm.warp(minterController.tokenAdministrationEndsAt());
         vm.prank(unauthorized);
@@ -190,8 +191,12 @@ contract DeepstateMinterControllerTest is Test {
             new DeepstateMinterController(address(this), address(deep), address(sablier), recipient, MINT_CAP);
         deep.grantRole(deep.MINTER_ROLE(), address(ownerController));
 
+        assertTrue(ownerController.hasRole(ownerController.MINTER_ROLE(), address(this)));
         ownerController.mint(mintRecipient, 100e18);
         ownerController.transferOwnership(newGovernance);
+
+        assertFalse(ownerController.hasRole(ownerController.MINTER_ROLE(), address(this)));
+        assertTrue(ownerController.hasRole(ownerController.MINTER_ROLE(), newGovernance));
 
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -215,6 +220,19 @@ contract DeepstateMinterControllerTest is Test {
         assertEq(minterController.owner(), newGovernance);
         assertFalse(minterController.hasRole(minterController.DEFAULT_ADMIN_ROLE(), address(this)));
         assertTrue(minterController.hasRole(minterController.DEFAULT_ADMIN_ROLE(), newGovernance));
+        assertFalse(minterController.hasRole(minterController.MINTER_ROLE(), address(this)));
+        assertTrue(minterController.hasRole(minterController.MINTER_ROLE(), newGovernance));
+    }
+
+    function test_TransferOwnershipToCurrentOwnerPreservesRoles() public {
+        minterController.transferOwnership(address(this));
+
+        assertEq(minterController.owner(), address(this));
+        assertTrue(minterController.hasRole(minterController.DEFAULT_ADMIN_ROLE(), address(this)));
+        assertTrue(minterController.hasRole(minterController.MINTER_ROLE(), address(this)));
+
+        minterController.mint(mintRecipient, 100e18);
+        assertEq(deep.balanceOf(mintRecipient), 100e18);
     }
 
     function test_ControllerOwnerCannotRenounceOrLoseDefaultAdmin() public {

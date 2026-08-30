@@ -79,6 +79,7 @@ contract DeepstateMinterController is AccessControl, Ownable, ReentrancyGuard {
         mintCap = mintCap_;
         _initializeOwner(owner_);
         _grantRole(DEFAULT_ADMIN_ROLE, owner_);
+        _grantRole(MINTER_ROLE, owner_);
     }
 
     /// @notice Start the two-year DEEP administration term after this contract receives token admin authority.
@@ -120,7 +121,7 @@ contract DeepstateMinterController is AccessControl, Ownable, ReentrancyGuard {
 
     /// @notice Mint `amount` DEEP to `to` and an additional 30% into a two-year recipient stream.
     /// @dev The 30% calculation rounds down. Amounts that round the stream allocation to zero revert.
-    function mint(address to, uint256 amount) external onlyMinterOrOwner nonReentrant returns (uint256 streamId) {
+    function mint(address to, uint256 amount) external onlyRole(MINTER_ROLE) nonReentrant returns (uint256 streamId) {
         if (to == address(0)) revert InvalidMintRecipient();
 
         uint256 vestingAmount = Math.mulDiv(amount, RECIPIENT_ALLOCATION_BPS, BPS_DENOMINATOR);
@@ -161,19 +162,20 @@ contract DeepstateMinterController is AccessControl, Ownable, ReentrancyGuard {
         emit MintedWithVesting(msg.sender, to, amount, recipient, vestingAmount, streamId);
     }
 
-    modifier onlyMinterOrOwner() {
-        if (msg.sender != owner()) _checkRole(MINTER_ROLE);
-        _;
-    }
-
-    /// @dev Keep EIP-173 ownership and AccessControl administration assigned to the same account.
+    /// @dev Keep EIP-173 ownership, AccessControl administration, and owner mint authority synchronized.
     function _setOwner(address newOwner) internal override {
         if (newOwner == address(0)) revert NewOwnerIsZeroAddress();
 
         address previousOwner = owner();
         super._setOwner(newOwner);
-        _grantRole(DEFAULT_ADMIN_ROLE, newOwner);
-        if (previousOwner != address(0)) _revokeRole(DEFAULT_ADMIN_ROLE, previousOwner);
+        if (newOwner != previousOwner) {
+            _grantRole(DEFAULT_ADMIN_ROLE, newOwner);
+            _grantRole(MINTER_ROLE, newOwner);
+            if (previousOwner != address(0)) {
+                _revokeRole(DEFAULT_ADMIN_ROLE, previousOwner);
+                _revokeRole(MINTER_ROLE, previousOwner);
+            }
+        }
     }
 
     function grantRole(bytes32 role, address account) public override {

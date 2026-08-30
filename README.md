@@ -95,8 +95,10 @@ role. The controller owner may rotate during the term but cannot return token
 administration early. At or after the exact two-year deadline, anyone may
 trigger the return. The return grants the token admin role to the controller's
 current owner before the controller renounces it, preserving the token's
-final-admin invariant throughout the transition. The current controller owner
-may mint through the controller without a separately granted controller role.
+final-admin invariant throughout the transition. The controller owner receives
+`DeepstateMinterController.MINTER_ROLE`; ownership transfers grant that role to
+the new owner and revoke it from the previous owner. Every mint is therefore
+authorized through the same role check, including owner mints.
 The controller retains its ordinary token minter role until governance revokes
 it after regaining token administration.
 
