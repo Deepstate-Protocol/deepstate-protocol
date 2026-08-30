@@ -45,7 +45,7 @@ contract DeepstateMinterControllerTest is Test {
         assertEq(minterController.tokenAdministrationEndsAt(), 0);
         assertFalse(minterController.tokenAdministrationReturned());
         assertTrue(minterController.hasRole(minterController.DEFAULT_ADMIN_ROLE(), address(this)));
-        assertTrue(minterController.hasRole(minterController.MINTER_ROLE(), address(this)));
+        assertFalse(minterController.hasRole(minterController.MINTER_ROLE(), address(this)));
         assertTrue(deep.hasRole(deep.MINTER_ROLE(), address(minterController)));
     }
 
@@ -176,7 +176,7 @@ contract DeepstateMinterControllerTest is Test {
         assertFalse(minterController.hasRole(minterController.DEFAULT_ADMIN_ROLE(), address(this)));
         assertTrue(minterController.hasRole(minterController.DEFAULT_ADMIN_ROLE(), newGovernance));
         assertFalse(minterController.hasRole(minterController.MINTER_ROLE(), address(this)));
-        assertTrue(minterController.hasRole(minterController.MINTER_ROLE(), newGovernance));
+        assertFalse(minterController.hasRole(minterController.MINTER_ROLE(), newGovernance));
 
         vm.warp(minterController.tokenAdministrationEndsAt());
         vm.prank(unauthorized);
@@ -194,12 +194,12 @@ contract DeepstateMinterControllerTest is Test {
             new DeepstateMinterController(address(this), address(deep), address(sablier), recipient, MINT_CAP);
         deep.grantRole(deep.MINTER_ROLE(), address(ownerController));
 
-        assertTrue(ownerController.hasRole(ownerController.MINTER_ROLE(), address(this)));
+        assertFalse(ownerController.hasRole(ownerController.MINTER_ROLE(), address(this)));
         ownerController.mint(mintRecipient, 100e18);
         ownerController.transferOwnership(newGovernance);
 
         assertFalse(ownerController.hasRole(ownerController.MINTER_ROLE(), address(this)));
-        assertTrue(ownerController.hasRole(ownerController.MINTER_ROLE(), newGovernance));
+        assertFalse(ownerController.hasRole(ownerController.MINTER_ROLE(), newGovernance));
 
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -215,6 +215,17 @@ contract DeepstateMinterControllerTest is Test {
         assertEq(deep.balanceOf(address(sablier)), 2 * Math.mulDiv(100e18, 30_00, 70_00));
     }
 
+    function test_OwnerCanMintAfterItsMinterRoleIsRevoked() public {
+        bytes32 minterRole = minterController.MINTER_ROLE();
+        minterController.grantRole(minterRole, address(this));
+        minterController.revokeRole(minterRole, address(this));
+
+        assertFalse(minterController.hasRole(minterRole, address(this)));
+        minterController.mint(mintRecipient, 70e18);
+        assertEq(deep.balanceOf(mintRecipient), 70e18);
+        assertEq(deep.balanceOf(address(sablier)), 30e18);
+    }
+
     function test_TwoStepOwnershipHandoverSynchronizesControllerAdmin() public {
         vm.prank(newGovernance);
         minterController.requestOwnershipHandover();
@@ -224,7 +235,7 @@ contract DeepstateMinterControllerTest is Test {
         assertFalse(minterController.hasRole(minterController.DEFAULT_ADMIN_ROLE(), address(this)));
         assertTrue(minterController.hasRole(minterController.DEFAULT_ADMIN_ROLE(), newGovernance));
         assertFalse(minterController.hasRole(minterController.MINTER_ROLE(), address(this)));
-        assertTrue(minterController.hasRole(minterController.MINTER_ROLE(), newGovernance));
+        assertFalse(minterController.hasRole(minterController.MINTER_ROLE(), newGovernance));
     }
 
     function test_TransferOwnershipToCurrentOwnerPreservesRoles() public {
@@ -232,7 +243,7 @@ contract DeepstateMinterControllerTest is Test {
 
         assertEq(minterController.owner(), address(this));
         assertTrue(minterController.hasRole(minterController.DEFAULT_ADMIN_ROLE(), address(this)));
-        assertTrue(minterController.hasRole(minterController.MINTER_ROLE(), address(this)));
+        assertFalse(minterController.hasRole(minterController.MINTER_ROLE(), address(this)));
 
         minterController.mint(mintRecipient, 100e18);
         assertEq(deep.balanceOf(mintRecipient), 100e18);

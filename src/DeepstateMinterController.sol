@@ -79,7 +79,11 @@ contract DeepstateMinterController is AccessControl, Ownable, ReentrancyGuard {
         mintCap = mintCap_;
         _initializeOwner(owner_);
         _grantRole(DEFAULT_ADMIN_ROLE, owner_);
-        _grantRole(MINTER_ROLE, owner_);
+    }
+
+    modifier onlyMinterOrOwner() {
+        _checkMinterOrOwner();
+        _;
     }
 
     /// @notice Lock DEEP administration in this contract for the initial two-year term.
@@ -121,7 +125,7 @@ contract DeepstateMinterController is AccessControl, Ownable, ReentrancyGuard {
 
     /// @notice Mint the 70% primary tranche `amount` to `to` and the 30% tranche into a one-year stream.
     /// @dev The recipient amount is `floor(amount * 30 / 70)`. Amounts that round it to zero revert.
-    function mint(address to, uint256 amount) external onlyRole(MINTER_ROLE) nonReentrant returns (uint256 streamId) {
+    function mint(address to, uint256 amount) external onlyMinterOrOwner nonReentrant returns (uint256 streamId) {
         if (to == address(0)) revert InvalidMintRecipient();
 
         uint256 vestingAmount = Math.mulDiv(amount, RECIPIENT_ALLOCATION_BPS, PRIMARY_ALLOCATION_BPS);
@@ -162,7 +166,7 @@ contract DeepstateMinterController is AccessControl, Ownable, ReentrancyGuard {
         emit MintedWithVesting(msg.sender, to, amount, recipient, vestingAmount, streamId);
     }
 
-    /// @dev Keep EIP-173 ownership, AccessControl administration, and owner mint authority synchronized.
+    /// @dev Keep EIP-173 ownership and AccessControl administration synchronized.
     function _setOwner(address newOwner) internal override {
         if (newOwner == address(0)) revert NewOwnerIsZeroAddress();
 
@@ -170,10 +174,8 @@ contract DeepstateMinterController is AccessControl, Ownable, ReentrancyGuard {
         super._setOwner(newOwner);
         if (newOwner != previousOwner) {
             _grantRole(DEFAULT_ADMIN_ROLE, newOwner);
-            _grantRole(MINTER_ROLE, newOwner);
             if (previousOwner != address(0)) {
                 _revokeRole(DEFAULT_ADMIN_ROLE, previousOwner);
-                _revokeRole(MINTER_ROLE, previousOwner);
             }
         }
     }
@@ -191,5 +193,9 @@ contract DeepstateMinterController is AccessControl, Ownable, ReentrancyGuard {
     function renounceRole(bytes32 role, address callerConfirmation) public override {
         if (role == DEFAULT_ADMIN_ROLE && callerConfirmation == owner()) revert OwnerMustRetainDefaultAdmin();
         super.renounceRole(role, callerConfirmation);
+    }
+
+    function _checkMinterOrOwner() internal view {
+        if (msg.sender != owner()) _checkRole(MINTER_ROLE);
     }
 }

@@ -99,9 +99,9 @@ deadline, anyone may call `unlockTokenAdministration()`. Unlocking grants the
 token admin role to the controller's current owner before the controller
 renounces it, preserving the token's final-admin invariant throughout the
 transition. The controller owner receives
-`DeepstateMinterController.MINTER_ROLE`; ownership transfers grant that role to
-the new owner and revoke it from the previous owner. Every mint is therefore
-authorized through the same role check, including owner mints.
+independent mint authority without needing `DeepstateMinterController.MINTER_ROLE`.
+Ownership transfers move that owner authority without changing separately
+delegated minter roles. Every non-owner mint requires `MINTER_ROLE`.
 The controller retains its ordinary token minter role until governance revokes
 it after regaining token administration.
 
