@@ -63,7 +63,6 @@ contract DeepstateRewarderFactory is Ownable {
 
     error InvalidOwner();
     error InvalidDeepstateV1Controller();
-    error DeepstateV1ControllerOwnerMismatch(address expected, address actual);
     error InvalidMinterController();
     error MinterControllerOwnerMismatch(address expected, address actual);
     error InvalidRewardToken();
@@ -86,10 +85,6 @@ contract DeepstateRewarderFactory is Ownable {
 
         _initializeOwner(owner_);
         deepstateV1Controller = DeepstateV1Controller(deepstateV1Controller_);
-        address deepstateV1ControllerOwner = deepstateV1Controller.owner();
-        if (deepstateV1ControllerOwner != owner_) {
-            revert DeepstateV1ControllerOwnerMismatch(owner_, deepstateV1ControllerOwner);
-        }
         deepstate = deepstateV1Controller.deepstate();
         minterController = IDeepstateMinterController(minterController_);
         address minterControllerOwner = minterController.owner();

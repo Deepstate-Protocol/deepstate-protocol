@@ -100,13 +100,12 @@ contract DeepstateRewarderFactoryTest is Test {
         vm.expectRevert(DeepstateRewarderFactory.InvalidDeepstateV1Controller.selector);
         new DeepstateRewarderFactory(address(this), alice, address(minterController));
 
-        DeepstateV1Controller mismatchedController = new DeepstateV1Controller(alice, address(deepstate));
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                DeepstateRewarderFactory.DeepstateV1ControllerOwnerMismatch.selector, address(this), alice
-            )
+        DeepstateV1Controller independentlyOwnedController = new DeepstateV1Controller(alice, address(deepstate));
+        DeepstateRewarderFactory independentlyOwnedControllerFactory = new DeepstateRewarderFactory(
+            address(this), address(independentlyOwnedController), address(minterController)
         );
-        new DeepstateRewarderFactory(address(this), address(mismatchedController), address(minterController));
+        assertEq(independentlyOwnedControllerFactory.owner(), address(this));
+        assertEq(independentlyOwnedController.owner(), alice);
 
         vm.expectRevert(DeepstateRewarderFactory.InvalidMinterController.selector);
         new DeepstateRewarderFactory(address(this), address(deepstateV1Controller), address(0));
