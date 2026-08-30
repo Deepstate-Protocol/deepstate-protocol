@@ -1,0 +1,245 @@
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.28;
+
+import {Ownable} from "solady/auth/Ownable.sol";
+
+import {DeepstateRewarderV2} from "./DeepstateRewarderV2.sol";
+import {DeepstateToken} from "./DeepstateToken.sol";
+
+interface IDeepstateRewarderRouter {
+    function owner() external view returns (address);
+    function poolHook(bytes32 poolId) external view returns (address);
+    function setPoolHookConfig(address token0, address token1, address hook, bool token0Active, bool token1Active)
+        external;
+    function setFeeConfig(address recipient, uint16 bps) external;
+    function transferOwnership(address newOwner) external payable;
+}
+
+/// @title Deepstate Rewarder Factory
+/// @notice Governance-owned CREATE2 factory for controller-launched market reward programs.
+/// @dev The factory must hold DEEP's MINTER_ROLE and own the Deepstate router before deployment.
+contract DeepstateRewarderFactory is Ownable {
+    struct MarketConfig {
+        address token0;
+        address token1;
+        uint160 token0StartQuantity;
+        uint160 token0MaxQuantity;
+        uint160 token1StartQuantity;
+        uint160 token1MaxQuantity;
+        bool token0Active;
+        bool token1Active;
+    }
+
+    /// @notice Minimum interval between successful controller or governance market deployments.
+    uint256 public constant DEPLOYMENT_COOLDOWN = 3 days;
+    /// @notice Duration encoded into every factory rewarder.
+    uint32 public constant EMISSION_DURATION = 395 days;
+    /// @notice Maximum scheduled emissions for each side, for one billion DEEP total per market.
+    uint96 public constant SIDE_EMISSION_CAP = 500_000_000e18;
+    /// @notice Initial DEEP minted to each rewarder. Further funding requires governance.
+    uint256 public constant INITIAL_FUNDING = 100_000_000e18;
+
+    IDeepstateRewarderRouter public immutable deepstate;
+    DeepstateToken public immutable rewardToken;
+
+    /// @notice Revocable address permitted to launch and retire factory markets.
+    address public controller;
+    /// @notice Earliest timestamp at which another market may be deployed.
+    uint256 public nextDeploymentAt;
+    /// @notice Nonce assigned to the next successful CREATE2 deployment.
+    uint256 public deploymentCount;
+
+    mapping(bytes32 poolId => address rewarder) public activeRewarder;
+    mapping(address rewarder => bytes32 poolId) public rewarderPool;
+
+    event ControllerSet(address indexed previousController, address indexed newController);
+    event MarketDeployed(
+        bytes32 indexed poolId,
+        uint256 indexed deploymentNonce,
+        address indexed rewarder,
+        bytes32 salt,
+        address token0,
+        address token1,
+        bool token0Active,
+        bool token1Active
+    );
+    event MarketRemoved(bytes32 indexed poolId, address indexed rewarder, uint256 burnedAmount);
+    event DeepstateFeeConfigured(address indexed recipient, uint16 bps);
+    event DeepstateOwnershipTransferred(address indexed newOwner);
+
+    error InvalidOwner();
+    error InvalidDeepstate();
+    error InvalidRewardToken();
+    error InvalidPool();
+    error InvalidHookFlags();
+    error DeploymentCooldown(uint256 nextDeploymentAt);
+    error ActiveMarketExists(bytes32 poolId, address rewarder);
+    error ExistingPoolHook(bytes32 poolId, address hook);
+    error MarketNotActive(bytes32 poolId);
+
+    constructor(address owner_, address deepstate_, address rewardToken_) {
+        if (owner_ == address(0)) revert InvalidOwner();
+        if (deepstate_ == address(0)) revert InvalidDeepstate();
+        if (rewardToken_ == address(0)) revert InvalidRewardToken();
+
+        _initializeOwner(owner_);
+        deepstate = IDeepstateRewarderRouter(deepstate_);
+        rewardToken = DeepstateToken(rewardToken_);
+    }
+
+    modifier onlyControllerOrOwner() {
+        _checkControllerOrOwner();
+        _;
+    }
+
+    /// @notice Appoint or revoke the operational controller. Set zero to revoke without replacement.
+    function setController(address newController) external onlyOwner {
+        address previousController = controller;
+        controller = newController;
+        emit ControllerSet(previousController, newController);
+    }
+
+    /// @notice Deploy, initially fund, and install a deterministic rewarder for one pool.
+    /// @dev Both sides share a one-billion-DEEP schedule but receive only 100 million DEEP initially.
+    function deployMarket(MarketConfig calldata config)
+        external
+        onlyControllerOrOwner
+        returns (DeepstateRewarderV2 rewarder)
+    {
+        bytes32 poolId_ = _validateMarket(config);
+        uint256 next = nextDeploymentAt;
+        if (block.timestamp < next) revert DeploymentCooldown(next);
+
+        address active = activeRewarder[poolId_];
+        if (active != address(0)) revert ActiveMarketExists(poolId_, active);
+
+        address existingHook = deepstate.poolHook(poolId_);
+        if (existingHook != address(0)) revert ExistingPoolHook(poolId_, existingHook);
+
+        uint256 nonce = deploymentCount;
+        bytes32 salt = marketSalt(poolId_, nonce);
+
+        deploymentCount = nonce + 1;
+        nextDeploymentAt = block.timestamp + DEPLOYMENT_COOLDOWN;
+
+        rewarder = new DeepstateRewarderV2{salt: salt}(
+            owner(),
+            address(deepstate),
+            address(rewardToken),
+            poolId_,
+            config.token0,
+            config.token1,
+            SIDE_EMISSION_CAP,
+            EMISSION_DURATION,
+            config.token0StartQuantity,
+            config.token0MaxQuantity,
+            config.token1StartQuantity,
+            config.token1MaxQuantity
+        );
+
+        activeRewarder[poolId_] = address(rewarder);
+        rewarderPool[address(rewarder)] = poolId_;
+
+        rewardToken.mint(address(rewarder), INITIAL_FUNDING);
+        deepstate.setPoolHookConfig(
+            config.token0, config.token1, address(rewarder), config.token0Active, config.token1Active
+        );
+
+        emit MarketDeployed(
+            poolId_,
+            nonce,
+            address(rewarder),
+            salt,
+            config.token0,
+            config.token1,
+            config.token0Active,
+            config.token1Active
+        );
+    }
+
+    /// @notice Remove a factory market, recover all remaining DEEP, and burn it.
+    /// @dev Retiring a market deliberately makes its unpaid claims unclaimable unless governance
+    /// later funds the detached rewarder directly.
+    function removeMarket(address token0, address token1)
+        external
+        onlyControllerOrOwner
+        returns (uint256 burnedAmount)
+    {
+        bytes32 poolId_ = _poolId(token0, token1);
+        address rewarder = activeRewarder[poolId_];
+        if (rewarder == address(0)) revert MarketNotActive(poolId_);
+
+        deepstate.setPoolHookConfig(token0, token1, address(0), false, false);
+        delete activeRewarder[poolId_];
+        delete rewarderPool[rewarder];
+
+        burnedAmount = DeepstateRewarderV2(rewarder).withdrawRewardBalance(address(this));
+        if (burnedAmount != 0) rewardToken.burn(burnedAmount);
+
+        emit MarketRemoved(poolId_, rewarder, burnedAmount);
+    }
+
+    /// @notice Configure router fees while the factory owns the router.
+    function setDeepstateFeeConfig(address recipient, uint16 bps) external onlyOwner {
+        deepstate.setFeeConfig(recipient, bps);
+        emit DeepstateFeeConfigured(recipient, bps);
+    }
+
+    /// @notice Return router ownership to governance or transfer it to a governance-approved owner.
+    function transferDeepstateOwnership(address newOwner) external onlyOwner {
+        deepstate.transferOwnership(newOwner);
+        emit DeepstateOwnershipTransferred(newOwner);
+    }
+
+    /// @notice CREATE2 salt for a pool and global deployment nonce.
+    function marketSalt(bytes32 poolId_, uint256 deploymentNonce) public pure returns (bytes32) {
+        return keccak256(abi.encode(poolId_, deploymentNonce));
+    }
+
+    /// @notice Predict a rewarder address using the factory's current owner and a deployment nonce.
+    function predictRewarderAddress(MarketConfig calldata config, uint256 deploymentNonce)
+        external
+        view
+        returns (address predicted)
+    {
+        bytes32 poolId_ = _validateMarket(config);
+        bytes32 salt = marketSalt(poolId_, deploymentNonce);
+        bytes32 initCodeHash = keccak256(
+            abi.encodePacked(
+                type(DeepstateRewarderV2).creationCode,
+                abi.encode(
+                    owner(),
+                    address(deepstate),
+                    address(rewardToken),
+                    poolId_,
+                    config.token0,
+                    config.token1,
+                    SIDE_EMISSION_CAP,
+                    EMISSION_DURATION,
+                    config.token0StartQuantity,
+                    config.token0MaxQuantity,
+                    config.token1StartQuantity,
+                    config.token1MaxQuantity
+                )
+            )
+        );
+
+        predicted =
+            address(uint160(uint256(keccak256(abi.encodePacked(bytes1(0xff), address(this), salt, initCodeHash)))));
+    }
+
+    function _validateMarket(MarketConfig calldata config) private pure returns (bytes32 poolId_) {
+        if (config.token0 >= config.token1) revert InvalidPool();
+        if (!config.token0Active && !config.token1Active) revert InvalidHookFlags();
+        poolId_ = keccak256(abi.encode(config.token0, config.token1));
+    }
+
+    function _poolId(address token0, address token1) private pure returns (bytes32 poolId_) {
+        if (token0 >= token1) revert InvalidPool();
+        poolId_ = keccak256(abi.encode(token0, token1));
+    }
+
+    function _checkControllerOrOwner() private view {
+        if (msg.sender != controller) _checkOwner();
+    }
+}

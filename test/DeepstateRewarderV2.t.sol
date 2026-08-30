@@ -53,6 +53,7 @@ contract DeepstateRewarderV2Test is Test {
 
     function test_InheritsRewarderConfiguration() public view {
         assertEq(rewarder.owner(), address(this));
+        assertEq(rewarder.factory(), address(this));
         assertEq(rewarder.deepstate(), DEEPSTATE);
         assertEq(rewarder.rewardToken(), address(rewardToken));
         assertEq(rewarder.token0(), TOKEN0);
