@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {Test} from "forge-std/Test.sol";
 import {Ownable} from "solady/auth/Ownable.sol";
 import {DeepstateV1} from "deepstate-contracts/DeepstateV1.sol";
@@ -151,7 +152,7 @@ contract DeepstateRewarderFactoryTest is Test {
         assertEq(secondFactory.owner(), governance);
         assertEq(rewarder.owner(), address(secondFactory));
         assertEq(secondToken.balanceOf(address(rewarder)), 100_000_000e18);
-        assertEq(secondToken.balanceOf(address(sablier)), 30_000_000e18);
+        assertEq(secondToken.balanceOf(address(sablier)), _vestingAllocation(100_000_000e18));
     }
 
     function test_ControllerDeploysPredictedCreate2MarketWithFixedScheduleAndFunding() public {
@@ -180,8 +181,8 @@ contract DeepstateRewarderFactoryTest is Test {
         assertEq(rewarder.token1StartQuantity(), 1e6);
         assertEq(rewarder.token1MaxQuantity(), 1_000_000e6);
         assertEq(deep.balanceOf(address(rewarder)), 100_000_000e18);
-        assertEq(deep.balanceOf(address(sablier)), 30_000_000e18);
-        assertEq(deep.totalSupply(), 130_000_000e18);
+        assertEq(deep.balanceOf(address(sablier)), _vestingAllocation(100_000_000e18));
+        assertEq(deep.totalSupply(), 100_000_000e18 + _vestingAllocation(100_000_000e18));
         assertEq(deepstate.poolHook(poolId), address(rewarder));
         assertEq(factory.activeRewarder(poolId), address(rewarder));
         assertEq(factory.rewarderPool(address(rewarder)), poolId);
@@ -210,8 +211,8 @@ contract DeepstateRewarderFactoryTest is Test {
 
         assertEq(factory.deploymentCount(), 2);
         assertEq(deep.balanceOf(address(second)), 100_000_000e18);
-        assertEq(deep.balanceOf(address(sablier)), 60_000_000e18);
-        assertEq(deep.totalSupply(), 260_000_000e18);
+        assertEq(deep.balanceOf(address(sablier)), 2 * _vestingAllocation(100_000_000e18));
+        assertEq(deep.totalSupply(), 200_000_000e18 + 2 * _vestingAllocation(100_000_000e18));
     }
 
     function test_GovernanceCanDeployWithoutControllerButStillObeysCooldown() public {
@@ -267,8 +268,8 @@ contract DeepstateRewarderFactoryTest is Test {
         assertEq(factory.rewarderPool(address(rewarder)), bytes32(0));
         assertEq(deep.balanceOf(address(rewarder)), 0);
         assertEq(deep.balanceOf(address(factory)), 0);
-        assertEq(deep.balanceOf(address(sablier)), 30_000_000e18);
-        assertEq(deep.totalSupply(), 30_000_000e18);
+        assertEq(deep.balanceOf(address(sablier)), _vestingAllocation(100_000_000e18));
+        assertEq(deep.totalSupply(), _vestingAllocation(100_000_000e18));
     }
 
     function test_RemovalBurnsLiveBalanceAfterPriorClaim() public {
@@ -285,8 +286,8 @@ contract DeepstateRewarderFactoryTest is Test {
         assertEq(burned, 75_000_000e18);
         assertEq(deep.balanceOf(address(rewarder)), 0);
         assertEq(deep.balanceOf(alice), claimed);
-        assertEq(deep.balanceOf(address(sablier)), 30_000_000e18);
-        assertEq(deep.totalSupply(), 55_000_000e18);
+        assertEq(deep.balanceOf(address(sablier)), _vestingAllocation(100_000_000e18));
+        assertEq(deep.totalSupply(), claimed + _vestingAllocation(100_000_000e18));
     }
 
     function test_ControllerCannotBurnRewarderDirectly() public {
@@ -309,13 +310,14 @@ contract DeepstateRewarderFactoryTest is Test {
         minterController.mint(address(rewarder), 900_000_000e18);
         minterController.revokeRole(minterController.MINTER_ROLE(), address(this));
         assertEq(deep.balanceOf(address(rewarder)), 1_000_000_000e18);
-        assertEq(deep.balanceOf(address(sablier)), 300_000_000e18);
+        uint256 vested = _vestingAllocation(100_000_000e18) + _vestingAllocation(900_000_000e18);
+        assertEq(deep.balanceOf(address(sablier)), vested);
 
         vm.prank(controller);
         uint256 burned = factory.removeMarket(TOKEN_A, TOKEN_B);
 
         assertEq(burned, 1_000_000_000e18);
-        assertEq(deep.totalSupply(), 300_000_000e18);
+        assertEq(deep.totalSupply(), vested);
     }
 
     function test_GovernanceCanRemoveMarketAfterRevokingController() public {
@@ -326,7 +328,7 @@ contract DeepstateRewarderFactoryTest is Test {
         uint256 burned = factory.removeMarket(TOKEN_A, TOKEN_B);
 
         assertEq(burned, 100_000_000e18);
-        assertEq(deep.totalSupply(), 30_000_000e18);
+        assertEq(deep.totalSupply(), _vestingAllocation(100_000_000e18));
     }
 
     function test_RemovedPoolCanBeResetWithFreshCreate2AddressAfterCooldown() public {
@@ -348,8 +350,8 @@ contract DeepstateRewarderFactoryTest is Test {
         assertEq(address(second), predicted);
         assertEq(factory.activeRewarder(_poolId(TOKEN_A, TOKEN_B)), address(second));
         assertEq(deep.balanceOf(address(second)), 100_000_000e18);
-        assertEq(deep.balanceOf(address(sablier)), 60_000_000e18);
-        assertEq(deep.totalSupply(), 160_000_000e18);
+        assertEq(deep.balanceOf(address(sablier)), 2 * _vestingAllocation(100_000_000e18));
+        assertEq(deep.totalSupply(), 100_000_000e18 + 2 * _vestingAllocation(100_000_000e18));
     }
 
     function test_CannotDeployOverActiveFactoryMarketOrExistingRouterHook() public {
@@ -483,7 +485,7 @@ contract DeepstateRewarderFactoryTest is Test {
         assertEq(burned, 100_000_000e18);
         assertEq(factory.activeRewarder(poolId), address(0));
         assertEq(deep.balanceOf(address(rewarder)), 0);
-        assertEq(deep.totalSupply(), 30_000_000e18);
+        assertEq(deep.totalSupply(), _vestingAllocation(100_000_000e18));
     }
 
     function test_RemovalRejectsUnexpectedReplacementHook() public {
@@ -573,6 +575,10 @@ contract DeepstateRewarderFactoryTest is Test {
 
     function _poolId(address token0, address token1) internal pure returns (bytes32) {
         return keccak256(abi.encode(token0, token1));
+    }
+
+    function _vestingAllocation(uint256 primaryAmount) internal pure returns (uint256) {
+        return Math.mulDiv(primaryAmount, 30_00, 70_00);
     }
 
     function _newMinterController(address admin, DeepstateToken token)

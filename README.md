@@ -63,22 +63,24 @@ proposals can therefore execute immediately after voting ends.
 `DeepstateMinterController` is the operational DEEP minter. Governance grants
 its `MINTER_ROLE` only to approved issuance contracts, such as
 `DeepstateRewarderFactory`. For every requested mint `M`, the controller mints
-`M` to the requested address and an additional `floor(30% * M)` to Sablier
-Lockup v4.0.1. Each recipient allocation gets its own linear one-year stream.
+`M` as the primary 70% tranche and mints `floor(M * 30 / 70)` to Sablier
+Lockup v4.0.1 as the recipient's 30% tranche. Each recipient allocation gets
+its own linear one-year stream.
 The vesting recipient and Sablier contract are immutable constructor settings;
 streams are non-cancelable and their NFTs are non-transferable.
 
 The controller also has an immutable deployment-time live-supply cap. The
 intended production value is 20,000,000,000 DEEP. Before every mint, the
 controller checks the existing DEEP `totalSupply()` plus both the requested
-amount and its additional 30% allocation. Burns reduce total supply and reopen
+amount and its corresponding 30% tranche. Burns reduce total supply and reopen
 capacity below the cap. This is a controller-level soft cap: governance can
 bypass it only by authorizing a different token-level minter after token
 administration returns.
 
-The 30% is additional issuance, not a split of `M`. A factory market therefore
-receives its complete 100,000,000 DEEP initial funding while a separate
-30,000,000 DEEP stream is created, for 130,000,000 DEEP total issuance. If a
+The requested address always receives the complete `M`; the recipient amount is
+minted in addition so that it represents 30% of the combined issuance. A
+factory market therefore receives its complete 100,000,000 DEEP initial funding
+while a separate `floor(100,000,000 * 30 / 70)` DEEP stream is created. If a
 market is retired, its unspent rewarder balance is burned, but the independent
 recipient stream continues vesting.
 

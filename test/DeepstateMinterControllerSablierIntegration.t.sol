@@ -40,7 +40,7 @@ contract DeepstateMinterControllerSablierIntegrationTest is Test {
     function test_RealSablierV4StreamVestsLinearlyForOneYear() public {
         uint40 startTime = uint40(block.timestamp);
         uint128 vestingAmount = 30e18;
-        uint256 streamId = minterController.mint(mintRecipient, 100e18);
+        uint256 streamId = minterController.mint(mintRecipient, 70e18);
 
         assertEq(streamId, 1);
         assertEq(sablier.ownerOf(streamId), recipient);
@@ -75,7 +75,7 @@ contract DeepstateMinterControllerSablierIntegrationTest is Test {
     }
 
     function test_RealSablierV4StreamCannotBeCanceledOrTransferred() public {
-        uint256 streamId = minterController.mint(mintRecipient, 100e18);
+        uint256 streamId = minterController.mint(mintRecipient, 70e18);
 
         vm.expectRevert();
         sablier.cancel(streamId);

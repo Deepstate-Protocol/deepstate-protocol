@@ -38,7 +38,7 @@ contract DeepstateMinterControllerTest is Test {
         assertEq(minterController.recipient(), recipient);
         assertEq(minterController.mintCap(), MINT_CAP);
         assertEq(minterController.RECIPIENT_ALLOCATION_BPS(), 30_00);
-        assertEq(minterController.BPS_DENOMINATOR(), 100_00);
+        assertEq(minterController.PRIMARY_ALLOCATION_BPS(), 70_00);
         assertEq(minterController.VESTING_DURATION(), 365 days);
         assertEq(minterController.TOKEN_ADMINISTRATION_DURATION(), 2 * 365 days);
         assertEq(minterController.owner(), address(this));
@@ -73,7 +73,7 @@ contract DeepstateMinterControllerTest is Test {
     }
 
     function test_MintCreatesExactNonCancelableOneYearStream() public {
-        uint256 amount = 100_000_000e18;
+        uint256 amount = 70_000_000e18;
         uint256 vestingAmount = 30_000_000e18;
 
         vm.expectEmit(true, true, true, true, address(minterController));
@@ -212,7 +212,7 @@ contract DeepstateMinterControllerTest is Test {
         ownerController.mint(mintRecipient, 100e18);
 
         assertEq(deep.balanceOf(mintRecipient), 200e18);
-        assertEq(deep.balanceOf(address(sablier)), 60e18);
+        assertEq(deep.balanceOf(address(sablier)), 2 * Math.mulDiv(100e18, 30_00, 70_00));
     }
 
     function test_TwoStepOwnershipHandoverSynchronizesControllerAdmin() public {
@@ -276,54 +276,54 @@ contract DeepstateMinterControllerTest is Test {
     }
 
     function test_EachMintCreatesAnIndependentStream() public {
-        uint256 firstStreamId = minterController.mint(mintRecipient, 100e18);
+        uint256 firstStreamId = minterController.mint(mintRecipient, 70e18);
         vm.warp(block.timestamp + 30 days);
-        uint256 secondStreamId = minterController.mint(mintRecipient, 200e18);
+        uint256 secondStreamId = minterController.mint(mintRecipient, 140e18);
 
         assertEq(firstStreamId, 1);
         assertEq(secondStreamId, 2);
         assertEq(sablier.stream(firstStreamId).depositAmount, 30e18);
         assertEq(sablier.stream(secondStreamId).depositAmount, 60e18);
-        assertEq(deep.balanceOf(mintRecipient), 300e18);
+        assertEq(deep.balanceOf(mintRecipient), 210e18);
         assertEq(deep.balanceOf(address(sablier)), 90e18);
     }
 
     function test_MintRoundsRecipientAllocationDown() public {
-        minterController.mint(mintRecipient, 4);
+        minterController.mint(mintRecipient, 5);
 
-        assertEq(deep.balanceOf(mintRecipient), 4);
-        assertEq(deep.balanceOf(address(sablier)), 1);
-        assertEq(deep.totalSupply(), 5);
+        assertEq(deep.balanceOf(mintRecipient), 5);
+        assertEq(deep.balanceOf(address(sablier)), 2);
+        assertEq(deep.totalSupply(), 7);
     }
 
     function test_MintCapIncludesExistingRequestedAndVestedSupply() public {
-        DeepstateMinterController cappedController = _newControllerWithCap(130e18);
+        DeepstateMinterController cappedController = _newControllerWithCap(100e18);
 
         deep.grantRole(deep.MINTER_ROLE(), address(this));
         deep.mint(unauthorized, 5);
 
-        vm.expectRevert(abi.encodeWithSelector(DeepstateMinterController.MintCapExceeded.selector, 130e18, 130e18 + 5));
-        cappedController.mint(mintRecipient, 100e18);
+        vm.expectRevert(abi.encodeWithSelector(DeepstateMinterController.MintCapExceeded.selector, 100e18, 100e18 + 5));
+        cappedController.mint(mintRecipient, 70e18);
 
         assertEq(deep.totalSupply(), 5);
         assertEq(sablier.nextStreamId(), 1);
     }
 
     function test_BurnReopensMintCapacity() public {
-        DeepstateMinterController cappedController = _newControllerWithCap(130e18);
+        DeepstateMinterController cappedController = _newControllerWithCap(100e18);
 
-        cappedController.mint(mintRecipient, 100e18);
-        assertEq(deep.totalSupply(), 130e18);
+        cappedController.mint(mintRecipient, 70e18);
+        assertEq(deep.totalSupply(), 100e18);
 
-        vm.expectRevert(abi.encodeWithSelector(DeepstateMinterController.MintCapExceeded.selector, 130e18, 130e18 + 5));
-        cappedController.mint(mintRecipient, 4);
+        vm.expectRevert(abi.encodeWithSelector(DeepstateMinterController.MintCapExceeded.selector, 100e18, 100e18 + 4));
+        cappedController.mint(mintRecipient, 3);
 
         vm.prank(mintRecipient);
-        deep.burn(5);
-        cappedController.mint(mintRecipient, 4);
+        deep.burn(4);
+        cappedController.mint(mintRecipient, 3);
 
-        assertEq(deep.totalSupply(), 130e18);
-        assertEq(deep.balanceOf(mintRecipient), 100e18 - 1);
+        assertEq(deep.totalSupply(), 100e18);
+        assertEq(deep.balanceOf(mintRecipient), 70e18 - 1);
         assertEq(deep.balanceOf(address(sablier)), 30e18 + 1);
     }
 
@@ -387,15 +387,15 @@ contract DeepstateMinterControllerTest is Test {
         minterController.mint(address(0), 100e18);
 
         vm.expectRevert(DeepstateMinterController.MintAmountTooSmall.selector);
-        minterController.mint(mintRecipient, 3);
+        minterController.mint(mintRecipient, 2);
 
         assertEq(deep.totalSupply(), 0);
         assertEq(sablier.nextStreamId(), 1);
     }
 
     function test_RevertWhenVestingAmountExceedsSablierUint128Limit() public {
-        uint256 amount = Math.mulDiv(uint256(type(uint128).max) + 1, 100_00, 30_00, Math.Rounding.Ceil);
-        uint256 vestingAmount = Math.mulDiv(amount, 30_00, 100_00);
+        uint256 amount = Math.mulDiv(uint256(type(uint128).max) + 1, 70_00, 30_00, Math.Rounding.Ceil);
+        uint256 vestingAmount = Math.mulDiv(amount, 30_00, 70_00);
 
         vm.expectRevert(abi.encodeWithSelector(DeepstateMinterController.VestingAmountTooLarge.selector, vestingAmount));
         minterController.mint(mintRecipient, amount);
@@ -443,8 +443,11 @@ contract DeepstateMinterControllerTest is Test {
 
     function test_MissingSablierTokenPullRollsBackBothMintsAndStream() public {
         sablier.setSkipTokenPull(true);
+        uint256 vestingAmount = Math.mulDiv(100e18, 30_00, 70_00);
 
-        vm.expectRevert(abi.encodeWithSelector(DeepstateMinterController.StreamFundingMismatch.selector, 0, 30e18));
+        vm.expectRevert(
+            abi.encodeWithSelector(DeepstateMinterController.StreamFundingMismatch.selector, 0, vestingAmount)
+        );
         minterController.mint(mintRecipient, 100e18);
 
         assertEq(deep.totalSupply(), 0);
@@ -454,16 +457,17 @@ contract DeepstateMinterControllerTest is Test {
         assertEq(sablier.nextStreamId(), 1);
     }
 
-    function testFuzz_MintAlwaysCreatesExactAdditionalAllocation(uint128 rawAmount) public {
-        uint256 maximumAmount = Math.mulDiv(MINT_CAP, 100_00, 130_00);
-        uint256 amount = bound(uint256(rawAmount), 4, maximumAmount);
-        uint256 expectedVesting = Math.mulDiv(amount, 30_00, 100_00);
+    function testFuzz_MintMaintainsThirtyPercentOfCombinedIssuance(uint128 rawAmount) public {
+        uint256 maximumAmount = Math.mulDiv(MINT_CAP, 70_00, 100_00);
+        uint256 amount = bound(uint256(rawAmount), 3, maximumAmount);
+        uint256 expectedVesting = Math.mulDiv(amount, 30_00, 70_00);
 
         uint256 streamId = minterController.mint(mintRecipient, amount);
 
         assertEq(deep.balanceOf(mintRecipient), amount);
         assertEq(deep.balanceOf(address(sablier)), expectedVesting);
         assertEq(deep.totalSupply(), amount + expectedVesting);
+        assertEq(expectedVesting, Math.mulDiv(deep.totalSupply(), 30_00, 100_00));
         assertEq(sablier.stream(streamId).depositAmount, expectedVesting);
     }
 

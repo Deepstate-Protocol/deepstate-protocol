@@ -15,7 +15,7 @@ import {DeepstateToken} from "./DeepstateToken.sol";
 import {ISablierLockupLinearV4} from "./interfaces/ISablierLockupLinearV4.sol";
 
 /// @title Deepstate Minter Controller
-/// @notice Enforces an additional 30% recipient allocation on every authorized DEEP mint.
+/// @notice Allocates 30% of every authorized DEEP issuance to a vesting recipient.
 /// @dev The recipient allocation is placed in a new non-cancelable, non-transferable Sablier
 /// Lockup v4 linear stream. This contract temporarily administers DEEP while remaining owned by governance.
 contract DeepstateMinterController is AccessControl, Ownable, ReentrancyGuard {
@@ -23,7 +23,7 @@ contract DeepstateMinterController is AccessControl, Ownable, ReentrancyGuard {
 
     bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
     uint256 public constant RECIPIENT_ALLOCATION_BPS = 30_00;
-    uint256 public constant BPS_DENOMINATOR = 100_00;
+    uint256 public constant PRIMARY_ALLOCATION_BPS = 70_00;
     uint40 public constant VESTING_DURATION = 365 days;
     uint40 public constant TOKEN_ADMINISTRATION_DURATION = 2 * 365 days;
 
@@ -119,12 +119,12 @@ contract DeepstateMinterController is AccessControl, Ownable, ReentrancyGuard {
         emit TokenAdministrationReturned(owner_, msg.sender);
     }
 
-    /// @notice Mint `amount` DEEP to `to` and an additional 30% into a one-year recipient stream.
-    /// @dev The 30% calculation rounds down. Amounts that round the stream allocation to zero revert.
+    /// @notice Mint the 70% primary tranche `amount` to `to` and the 30% tranche into a one-year stream.
+    /// @dev The recipient amount is `floor(amount * 30 / 70)`. Amounts that round it to zero revert.
     function mint(address to, uint256 amount) external onlyRole(MINTER_ROLE) nonReentrant returns (uint256 streamId) {
         if (to == address(0)) revert InvalidMintRecipient();
 
-        uint256 vestingAmount = Math.mulDiv(amount, RECIPIENT_ALLOCATION_BPS, BPS_DENOMINATOR);
+        uint256 vestingAmount = Math.mulDiv(amount, RECIPIENT_ALLOCATION_BPS, PRIMARY_ALLOCATION_BPS);
         if (vestingAmount == 0) revert MintAmountTooSmall();
         if (vestingAmount > type(uint128).max) revert VestingAmountTooLarge(vestingAmount);
         uint128 streamAmount = SafeCast.toUint128(vestingAmount);
