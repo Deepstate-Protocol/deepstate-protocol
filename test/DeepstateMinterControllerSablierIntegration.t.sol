@@ -37,7 +37,7 @@ contract DeepstateMinterControllerSablierIntegrationTest is Test {
         deep.grantRole(deep.MINTER_ROLE(), address(minterController));
     }
 
-    function test_RealSablierV4StreamVestsLinearlyForTwoYears() public {
+    function test_RealSablierV4StreamVestsLinearlyForOneYear() public {
         uint40 startTime = uint40(block.timestamp);
         uint128 vestingAmount = 30e18;
         uint256 streamId = minterController.mint(mintRecipient, 100e18);
@@ -49,7 +49,7 @@ contract DeepstateMinterControllerSablierIntegrationTest is Test {
         assertEq(address(sablier.getUnderlyingToken(streamId)), address(deep));
         assertEq(sablier.getDepositedAmount(streamId), vestingAmount);
         assertEq(sablier.getStartTime(streamId), startTime);
-        assertEq(sablier.getEndTime(streamId), startTime + 2 * 365 days);
+        assertEq(sablier.getEndTime(streamId), startTime + 365 days);
         assertEq(sablier.getCliffTime(streamId), 0);
         assertEq(sablier.getGranularity(streamId), 1);
         assertFalse(sablier.isCancelable(streamId));
@@ -57,14 +57,14 @@ contract DeepstateMinterControllerSablierIntegrationTest is Test {
         assertEq(sablier.streamedAmountOf(streamId), 0);
         assertEq(deep.balanceOf(address(sablier)), vestingAmount);
 
-        vm.warp(startTime + 365 days);
+        vm.warp(startTime + 365 days / 2);
         assertEq(sablier.streamedAmountOf(streamId), vestingAmount / 2);
         vm.prank(recipient);
         uint128 firstWithdrawal = sablier.withdrawMax(streamId, recipient);
         assertEq(firstWithdrawal, vestingAmount / 2);
         assertEq(deep.balanceOf(recipient), vestingAmount / 2);
 
-        vm.warp(startTime + 2 * 365 days);
+        vm.warp(startTime + 365 days);
         assertEq(sablier.streamedAmountOf(streamId), vestingAmount);
         vm.prank(recipient);
         uint128 finalWithdrawal = sablier.withdrawMax(streamId, recipient);

@@ -64,7 +64,7 @@ proposals can therefore execute immediately after voting ends.
 its `MINTER_ROLE` only to approved issuance contracts, such as
 `DeepstateRewarderFactory`. For every requested mint `M`, the controller mints
 `M` to the requested address and an additional `floor(30% * M)` to Sablier
-Lockup v4.0.1. Each recipient allocation gets its own linear two-year stream.
+Lockup v4.0.1. Each recipient allocation gets its own linear one-year stream.
 The vesting recipient and Sablier contract are immutable constructor settings;
 streams are non-cancelable and their NFTs are non-transferable.
 

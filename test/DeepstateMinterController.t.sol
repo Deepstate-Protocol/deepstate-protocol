@@ -39,7 +39,7 @@ contract DeepstateMinterControllerTest is Test {
         assertEq(minterController.mintCap(), MINT_CAP);
         assertEq(minterController.RECIPIENT_ALLOCATION_BPS(), 3_000);
         assertEq(minterController.BPS_DENOMINATOR(), 10_000);
-        assertEq(minterController.VESTING_DURATION(), 2 * 365 days);
+        assertEq(minterController.VESTING_DURATION(), 365 days);
         assertEq(minterController.TOKEN_ADMINISTRATION_DURATION(), 2 * 365 days);
         assertEq(minterController.owner(), address(this));
         assertEq(minterController.tokenAdministrationEndsAt(), 0);
@@ -72,7 +72,7 @@ contract DeepstateMinterControllerTest is Test {
         new DeepstateMinterController(address(this), address(deep), address(sablier), recipient, 0);
     }
 
-    function test_MintCreatesExactNonCancelableTwoYearStream() public {
+    function test_MintCreatesExactNonCancelableOneYearStream() public {
         uint256 amount = 100_000_000e18;
         uint256 vestingAmount = 30_000_000e18;
 
@@ -102,7 +102,7 @@ contract DeepstateMinterControllerTest is Test {
         assertEq(created.cliffUnlockAmount, 0);
         assertEq(created.granularity, 0);
         assertEq(created.cliffDuration, 0);
-        assertEq(created.totalDuration, 2 * 365 days);
+        assertEq(created.totalDuration, 365 days);
     }
 
     function test_ActivateTokenAdministrationStartsTwoYearTermAndEnsuresMinterRole() public {

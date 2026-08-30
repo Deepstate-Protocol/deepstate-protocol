@@ -24,7 +24,7 @@ contract DeepstateMinterController is AccessControl, Ownable, ReentrancyGuard {
     bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
     uint256 public constant RECIPIENT_ALLOCATION_BPS = 3_000;
     uint256 public constant BPS_DENOMINATOR = 10_000;
-    uint40 public constant VESTING_DURATION = 2 * 365 days;
+    uint40 public constant VESTING_DURATION = 365 days;
     uint40 public constant TOKEN_ADMINISTRATION_DURATION = 2 * 365 days;
 
     DeepstateToken public immutable rewardToken;
@@ -119,7 +119,7 @@ contract DeepstateMinterController is AccessControl, Ownable, ReentrancyGuard {
         emit TokenAdministrationReturned(owner_, msg.sender);
     }
 
-    /// @notice Mint `amount` DEEP to `to` and an additional 30% into a two-year recipient stream.
+    /// @notice Mint `amount` DEEP to `to` and an additional 30% into a one-year recipient stream.
     /// @dev The 30% calculation rounds down. Amounts that round the stream allocation to zero revert.
     function mint(address to, uint256 amount) external onlyRole(MINTER_ROLE) nonReentrant returns (uint256 streamId) {
         if (to == address(0)) revert InvalidMintRecipient();
