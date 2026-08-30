@@ -9,6 +9,7 @@ import {DeepstateV1} from "deepstate-contracts/DeepstateV1.sol";
 import {DeepstateRewarder} from "../src/DeepstateRewarder.sol";
 import {DeepstateRewarderFactory} from "../src/DeepstateRewarderFactory.sol";
 import {DeepstateRewarderV2} from "../src/DeepstateRewarderV2.sol";
+import {DeepstateRouterController} from "../src/DeepstateRouterController.sol";
 import {DeepstateToken} from "../src/DeepstateToken.sol";
 
 contract DeepstateRewarderFactoryTest is Test {
@@ -19,27 +20,30 @@ contract DeepstateRewarderFactoryTest is Test {
 
     DeepstateToken internal deep;
     DeepstateV1 internal deepstate;
+    DeepstateRouterController internal routerController;
     DeepstateRewarderFactory internal factory;
 
     address internal controller = makeAddr("controller");
     address internal alice = makeAddr("alice");
-    address internal feeRecipient = makeAddr("feeRecipient");
 
     function setUp() public {
         vm.warp(1_000_000);
 
         deep = new DeepstateToken(address(this), "Deepstate", "DEEP");
         deepstate = new DeepstateV1();
-        factory = new DeepstateRewarderFactory(address(this), address(deepstate), address(deep));
+        routerController = new DeepstateRouterController(address(this), address(deepstate));
+        factory = new DeepstateRewarderFactory(address(this), address(routerController), address(deep));
 
         deep.grantRole(deep.MINTER_ROLE(), address(factory));
-        deepstate.transferOwnership(address(factory));
+        deepstate.transferOwnership(address(routerController));
+        routerController.setHookManager(address(factory));
         factory.setController(controller);
     }
 
     function test_ImmutableConfigurationAndInitialAuthority() public view {
         assertEq(factory.owner(), address(this));
         assertEq(factory.controller(), controller);
+        assertEq(address(factory.routerController()), address(routerController));
         assertEq(address(factory.deepstate()), address(deepstate));
         assertEq(address(factory.rewardToken()), address(deep));
         assertEq(factory.DEPLOYMENT_COOLDOWN(), 3 days);
@@ -47,36 +51,55 @@ contract DeepstateRewarderFactoryTest is Test {
         assertEq(factory.SIDE_EMISSION_CAP(), 500_000_000e18);
         assertEq(factory.INITIAL_FUNDING(), 100_000_000e18);
         assertTrue(deep.hasRole(deep.MINTER_ROLE(), address(factory)));
-        assertEq(deepstate.owner(), address(factory));
+        assertEq(deepstate.owner(), address(routerController));
+        assertEq(routerController.hookManager(), address(factory));
         assertEq(factory.nextDeploymentAt(), 0);
         assertEq(factory.deploymentCount(), 0);
     }
 
     function test_ConstructorValidation() public {
         vm.expectRevert(DeepstateRewarderFactory.InvalidOwner.selector);
-        new DeepstateRewarderFactory(address(0), address(deepstate), address(deep));
+        new DeepstateRewarderFactory(address(0), address(routerController), address(deep));
 
-        vm.expectRevert(DeepstateRewarderFactory.InvalidDeepstate.selector);
+        vm.expectRevert(DeepstateRewarderFactory.InvalidRouterController.selector);
         new DeepstateRewarderFactory(address(this), address(0), address(deep));
 
+        vm.expectRevert(DeepstateRewarderFactory.InvalidRouterController.selector);
+        new DeepstateRewarderFactory(address(this), alice, address(deep));
+
+        DeepstateRouterController mismatchedController = new DeepstateRouterController(alice, address(deepstate));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeepstateRewarderFactory.RouterControllerOwnerMismatch.selector, address(this), alice
+            )
+        );
+        new DeepstateRewarderFactory(address(this), address(mismatchedController), address(deep));
+
         vm.expectRevert(DeepstateRewarderFactory.InvalidRewardToken.selector);
-        new DeepstateRewarderFactory(address(this), address(deepstate), address(0));
+        new DeepstateRewarderFactory(address(this), address(routerController), address(0));
+
+        vm.expectRevert(DeepstateRewarderFactory.InvalidRewardToken.selector);
+        new DeepstateRewarderFactory(address(this), address(routerController), alice);
     }
 
     function test_GovernanceOwnerIsIndependentFromFactoryDeployer() public {
         address governance = makeAddr("governance");
         DeepstateToken secondToken = new DeepstateToken(address(this), "Second", "SECOND");
         DeepstateV1 secondRouter = new DeepstateV1();
+        DeepstateRouterController secondRouterController =
+            new DeepstateRouterController(governance, address(secondRouter));
         DeepstateRewarderFactory secondFactory =
-            new DeepstateRewarderFactory(governance, address(secondRouter), address(secondToken));
+            new DeepstateRewarderFactory(governance, address(secondRouterController), address(secondToken));
         secondToken.grantRole(secondToken.MINTER_ROLE(), address(secondFactory));
-        secondRouter.transferOwnership(address(secondFactory));
+        secondRouter.transferOwnership(address(secondRouterController));
 
         vm.expectRevert(Ownable.Unauthorized.selector);
         secondFactory.setController(controller);
 
-        vm.prank(governance);
+        vm.startPrank(governance);
+        secondRouterController.setHookManager(address(secondFactory));
         secondFactory.setController(controller);
+        vm.stopPrank();
         vm.prank(controller);
         DeepstateRewarderV2 rewarder = secondFactory.deployMarket(_market(TOKEN_A, TOKEN_B));
 
@@ -275,11 +298,14 @@ contract DeepstateRewarderFactoryTest is Test {
         factory.deployMarket(config);
 
         DeepstateV1 secondRouter = new DeepstateV1();
+        DeepstateRouterController secondRouterController =
+            new DeepstateRouterController(address(this), address(secondRouter));
         DeepstateRewarderFactory secondFactory =
-            new DeepstateRewarderFactory(address(this), address(secondRouter), address(deep));
+            new DeepstateRewarderFactory(address(this), address(secondRouterController), address(deep));
         secondRouter.setPoolHookConfig(TOKEN_C, TOKEN_D, alice, true, false);
-        secondRouter.transferOwnership(address(secondFactory));
+        secondRouter.transferOwnership(address(secondRouterController));
         deep.grantRole(deep.MINTER_ROLE(), address(secondFactory));
+        secondRouterController.setHookManager(address(secondFactory));
         secondFactory.setController(controller);
 
         bytes32 secondPoolId = _poolId(TOKEN_C, TOKEN_D);
@@ -294,9 +320,12 @@ contract DeepstateRewarderFactoryTest is Test {
     function test_DeploymentWithoutMinterRoleRevertsAtomically() public {
         DeepstateToken secondToken = new DeepstateToken(address(this), "Second", "SECOND");
         DeepstateV1 secondRouter = new DeepstateV1();
+        DeepstateRouterController secondRouterController =
+            new DeepstateRouterController(address(this), address(secondRouter));
         DeepstateRewarderFactory secondFactory =
-            new DeepstateRewarderFactory(address(this), address(secondRouter), address(secondToken));
-        secondRouter.transferOwnership(address(secondFactory));
+            new DeepstateRewarderFactory(address(this), address(secondRouterController), address(secondToken));
+        secondRouter.transferOwnership(address(secondRouterController));
+        secondRouterController.setHookManager(address(secondFactory));
         secondFactory.setController(controller);
 
         DeepstateRewarderFactory.MarketConfig memory config = _market(TOKEN_A, TOKEN_B);
@@ -322,9 +351,12 @@ contract DeepstateRewarderFactoryTest is Test {
     function test_DeploymentWithoutRouterOwnershipRevertsAtomically() public {
         DeepstateToken secondToken = new DeepstateToken(address(this), "Second", "SECOND");
         DeepstateV1 secondRouter = new DeepstateV1();
+        DeepstateRouterController secondRouterController =
+            new DeepstateRouterController(address(this), address(secondRouter));
         DeepstateRewarderFactory secondFactory =
-            new DeepstateRewarderFactory(address(this), address(secondRouter), address(secondToken));
+            new DeepstateRewarderFactory(address(this), address(secondRouterController), address(secondToken));
         secondToken.grantRole(secondToken.MINTER_ROLE(), address(secondFactory));
+        secondRouterController.setHookManager(address(secondFactory));
         secondFactory.setController(controller);
 
         DeepstateRewarderFactory.MarketConfig memory config = _market(TOKEN_A, TOKEN_B);
@@ -337,6 +369,70 @@ contract DeepstateRewarderFactoryTest is Test {
         assertEq(predicted.code.length, 0);
         assertEq(secondFactory.deploymentCount(), 0);
         assertEq(secondToken.totalSupply(), 0);
+    }
+
+    function test_DeploymentWithoutDelegatedHookPermissionRevertsAtomically() public {
+        DeepstateToken secondToken = new DeepstateToken(address(this), "Second", "SECOND");
+        DeepstateV1 secondRouter = new DeepstateV1();
+        DeepstateRouterController secondRouterController =
+            new DeepstateRouterController(address(this), address(secondRouter));
+        DeepstateRewarderFactory secondFactory =
+            new DeepstateRewarderFactory(address(this), address(secondRouterController), address(secondToken));
+        secondToken.grantRole(secondToken.MINTER_ROLE(), address(secondFactory));
+        secondRouter.transferOwnership(address(secondRouterController));
+        secondFactory.setController(controller);
+
+        DeepstateRewarderFactory.MarketConfig memory config = _market(TOKEN_A, TOKEN_B);
+        address predicted = secondFactory.predictRewarderAddress(config, 0);
+
+        vm.expectRevert(Ownable.Unauthorized.selector);
+        vm.prank(controller);
+        secondFactory.deployMarket(config);
+
+        assertEq(predicted.code.length, 0);
+        assertEq(secondFactory.deploymentCount(), 0);
+        assertEq(secondToken.totalSupply(), 0);
+        assertEq(secondRouter.poolHook(_poolId(TOKEN_A, TOKEN_B)), address(0));
+    }
+
+    function test_GovernanceCanCleanUpAfterRevokingFactoryHookPermission() public {
+        vm.prank(controller);
+        DeepstateRewarderV2 rewarder = factory.deployMarket(_market(TOKEN_A, TOKEN_B));
+        bytes32 poolId = _poolId(TOKEN_A, TOKEN_B);
+        routerController.setHookManager(address(0));
+
+        vm.expectRevert(Ownable.Unauthorized.selector);
+        vm.prank(controller);
+        factory.removeMarket(TOKEN_A, TOKEN_B);
+        assertEq(factory.activeRewarder(poolId), address(rewarder));
+        assertEq(deep.balanceOf(address(rewarder)), 100_000_000e18);
+
+        routerController.setPoolHookConfig(TOKEN_A, TOKEN_B, address(0), false, false);
+        uint256 burned = factory.removeMarket(TOKEN_A, TOKEN_B);
+
+        assertEq(burned, 100_000_000e18);
+        assertEq(factory.activeRewarder(poolId), address(0));
+        assertEq(deep.balanceOf(address(rewarder)), 0);
+        assertEq(deep.totalSupply(), 0);
+    }
+
+    function test_RemovalRejectsUnexpectedReplacementHook() public {
+        vm.prank(controller);
+        DeepstateRewarderV2 rewarder = factory.deployMarket(_market(TOKEN_A, TOKEN_B));
+        bytes32 poolId = _poolId(TOKEN_A, TOKEN_B);
+        routerController.setPoolHookConfig(TOKEN_A, TOKEN_B, alice, true, true);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeepstateRewarderFactory.UnexpectedPoolHook.selector, poolId, address(rewarder), alice
+            )
+        );
+        vm.prank(controller);
+        factory.removeMarket(TOKEN_A, TOKEN_B);
+
+        assertEq(deepstate.poolHook(poolId), alice);
+        assertEq(factory.activeRewarder(poolId), address(rewarder));
+        assertEq(deep.balanceOf(address(rewarder)), 100_000_000e18);
     }
 
     function test_InvalidMarketConfigurationRevertsBeforeDeployment() public {
@@ -361,24 +457,6 @@ contract DeepstateRewarderFactoryTest is Test {
         assertEq(factory.deploymentCount(), 0);
         assertEq(factory.nextDeploymentAt(), 0);
         assertEq(deep.totalSupply(), 0);
-    }
-
-    function test_OnlyGovernanceCanConfigureFeesAndTransferRouterOwnership() public {
-        vm.expectRevert(Ownable.Unauthorized.selector);
-        vm.prank(controller);
-        factory.setDeepstateFeeConfig(feeRecipient, 10);
-
-        factory.setDeepstateFeeConfig(feeRecipient, 10);
-        (address recipient, uint16 bps) = deepstate.feeConfig();
-        assertEq(recipient, feeRecipient);
-        assertEq(bps, 10);
-
-        vm.expectRevert(Ownable.Unauthorized.selector);
-        vm.prank(controller);
-        factory.transferDeepstateOwnership(alice);
-
-        factory.transferDeepstateOwnership(alice);
-        assertEq(deepstate.owner(), alice);
     }
 
     function test_UnauthorizedAccountCannotDeployOrRemoveMarket() public {

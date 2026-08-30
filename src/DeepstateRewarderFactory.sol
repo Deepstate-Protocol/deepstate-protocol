@@ -4,20 +4,12 @@ pragma solidity 0.8.28;
 import {Ownable} from "solady/auth/Ownable.sol";
 
 import {DeepstateRewarderV2} from "./DeepstateRewarderV2.sol";
+import {DeepstateRouterController, IDeepstateRouterAdmin} from "./DeepstateRouterController.sol";
 import {DeepstateToken} from "./DeepstateToken.sol";
-
-interface IDeepstateRewarderRouter {
-    function owner() external view returns (address);
-    function poolHook(bytes32 poolId) external view returns (address);
-    function setPoolHookConfig(address token0, address token1, address hook, bool token0Active, bool token1Active)
-        external;
-    function setFeeConfig(address recipient, uint16 bps) external;
-    function transferOwnership(address newOwner) external payable;
-}
 
 /// @title Deepstate Rewarder Factory
 /// @notice Governance-owned CREATE2 factory for controller-launched market reward programs.
-/// @dev The factory must hold DEEP's MINTER_ROLE and own the Deepstate router before deployment.
+/// @dev The factory must hold DEEP's MINTER_ROLE and be the router controller's hook manager.
 contract DeepstateRewarderFactory is Ownable {
     struct MarketConfig {
         address token0;
@@ -39,7 +31,8 @@ contract DeepstateRewarderFactory is Ownable {
     /// @notice Initial DEEP minted to each rewarder. Further funding requires governance.
     uint256 public constant INITIAL_FUNDING = 100_000_000e18;
 
-    IDeepstateRewarderRouter public immutable deepstate;
+    DeepstateRouterController public immutable routerController;
+    IDeepstateRouterAdmin public immutable deepstate;
     DeepstateToken public immutable rewardToken;
 
     /// @notice Revocable address permitted to launch and retire factory markets.
@@ -64,26 +57,33 @@ contract DeepstateRewarderFactory is Ownable {
         bool token1Active
     );
     event MarketRemoved(bytes32 indexed poolId, address indexed rewarder, uint256 burnedAmount);
-    event DeepstateFeeConfigured(address indexed recipient, uint16 bps);
-    event DeepstateOwnershipTransferred(address indexed newOwner);
 
     error InvalidOwner();
-    error InvalidDeepstate();
+    error InvalidRouterController();
+    error RouterControllerOwnerMismatch(address expected, address actual);
     error InvalidRewardToken();
     error InvalidPool();
     error InvalidHookFlags();
     error DeploymentCooldown(uint256 nextDeploymentAt);
     error ActiveMarketExists(bytes32 poolId, address rewarder);
     error ExistingPoolHook(bytes32 poolId, address hook);
+    error UnexpectedPoolHook(bytes32 poolId, address expected, address actual);
     error MarketNotActive(bytes32 poolId);
 
-    constructor(address owner_, address deepstate_, address rewardToken_) {
+    constructor(address owner_, address routerController_, address rewardToken_) {
         if (owner_ == address(0)) revert InvalidOwner();
-        if (deepstate_ == address(0)) revert InvalidDeepstate();
-        if (rewardToken_ == address(0)) revert InvalidRewardToken();
+        if (routerController_ == address(0) || routerController_.code.length == 0) {
+            revert InvalidRouterController();
+        }
+        if (rewardToken_ == address(0) || rewardToken_.code.length == 0) revert InvalidRewardToken();
 
         _initializeOwner(owner_);
-        deepstate = IDeepstateRewarderRouter(deepstate_);
+        routerController = DeepstateRouterController(routerController_);
+        address routerControllerOwner = routerController.owner();
+        if (routerControllerOwner != owner_) {
+            revert RouterControllerOwnerMismatch(owner_, routerControllerOwner);
+        }
+        deepstate = routerController.deepstate();
         rewardToken = DeepstateToken(rewardToken_);
     }
 
@@ -141,7 +141,7 @@ contract DeepstateRewarderFactory is Ownable {
         rewarderPool[address(rewarder)] = poolId_;
 
         rewardToken.mint(address(rewarder), INITIAL_FUNDING);
-        deepstate.setPoolHookConfig(
+        routerController.setPoolHookConfig(
             config.token0, config.token1, address(rewarder), config.token0Active, config.token1Active
         );
 
@@ -169,7 +169,12 @@ contract DeepstateRewarderFactory is Ownable {
         address rewarder = activeRewarder[poolId_];
         if (rewarder == address(0)) revert MarketNotActive(poolId_);
 
-        deepstate.setPoolHookConfig(token0, token1, address(0), false, false);
+        address currentHook = deepstate.poolHook(poolId_);
+        if (currentHook == rewarder) {
+            routerController.setPoolHookConfig(token0, token1, address(0), false, false);
+        } else if (currentHook != address(0)) {
+            revert UnexpectedPoolHook(poolId_, rewarder, currentHook);
+        }
         delete activeRewarder[poolId_];
         delete rewarderPool[rewarder];
 
@@ -177,18 +182,6 @@ contract DeepstateRewarderFactory is Ownable {
         if (burnedAmount != 0) rewardToken.burn(burnedAmount);
 
         emit MarketRemoved(poolId_, rewarder, burnedAmount);
-    }
-
-    /// @notice Configure router fees while the factory owns the router.
-    function setDeepstateFeeConfig(address recipient, uint16 bps) external onlyOwner {
-        deepstate.setFeeConfig(recipient, bps);
-        emit DeepstateFeeConfigured(recipient, bps);
-    }
-
-    /// @notice Return router ownership to governance or transfer it to a governance-approved owner.
-    function transferDeepstateOwnership(address newOwner) external onlyOwner {
-        deepstate.transferOwnership(newOwner);
-        emit DeepstateOwnershipTransferred(newOwner);
     }
 
     /// @notice CREATE2 salt for a pool and global deployment nonce.
