@@ -89,13 +89,14 @@ the controller.
 
 For the initial two-year issuance term, the controller temporarily holds
 `DeepstateToken.DEFAULT_ADMIN_ROLE` while governance remains the controller's
-owner. Governance activates the term only after granting the token admin role
-to the controller. Activation also ensures the controller has the token minter
-role. The controller owner may rotate during the term but cannot return token
-administration early. At or after the exact two-year deadline, anyone may
-trigger the return. The return grants the token admin role to the controller's
-current owner before the controller renounces it, preserving the token's
-final-admin invariant throughout the transition. The controller owner receives
+owner. Governance calls `lockTokenAdministration()` only after granting the
+token admin role to the controller. Locking also ensures the controller has the
+token minter role. The controller owner may rotate during the term, but
+administration cannot be unlocked early. At or after the exact two-year
+deadline, anyone may call `unlockTokenAdministration()`. Unlocking grants the
+token admin role to the controller's current owner before the controller
+renounces it, preserving the token's final-admin invariant throughout the
+transition. The controller owner receives
 `DeepstateMinterController.MINTER_ROLE`; ownership transfers grant that role to
 the new owner and revoke it from the previous owner. Every mint is therefore
 authorized through the same role check, including owner mints.

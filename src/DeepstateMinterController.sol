@@ -82,9 +82,9 @@ contract DeepstateMinterController is AccessControl, Ownable, ReentrancyGuard {
         _grantRole(MINTER_ROLE, owner_);
     }
 
-    /// @notice Start the two-year DEEP administration term after this contract receives token admin authority.
+    /// @notice Lock DEEP administration in this contract for the initial two-year term.
     /// @dev Also ensures this controller holds DEEP's operational minter role.
-    function activateTokenAdministration() external onlyOwner {
+    function lockTokenAdministration() external onlyOwner {
         if (tokenAdministrationEndsAt != 0) revert TokenAdministrationAlreadyActivated();
 
         bytes32 tokenAdminRole = rewardToken.DEFAULT_ADMIN_ROLE();
@@ -98,9 +98,9 @@ contract DeepstateMinterController is AccessControl, Ownable, ReentrancyGuard {
         emit TokenAdministrationActivated(endsAt);
     }
 
-    /// @notice Return DEEP administration to this contract's current governance owner after the term expires.
-    /// @dev Anyone may trigger the return at or after the exact deadline.
-    function returnTokenAdministration() external {
+    /// @notice Unlock DEEP administration to this contract's current governance owner after the term expires.
+    /// @dev Anyone may trigger the unlock at or after the exact deadline.
+    function unlockTokenAdministration() external {
         uint40 endsAt = tokenAdministrationEndsAt;
         if (endsAt == 0) revert TokenAdministrationNotActive();
         if (tokenAdministrationReturned) revert TokenAdministrationAlreadyReturned();
