@@ -32,10 +32,8 @@ contract DeepstateMinterController is OwnableRoles, ReentrancyGuard {
     /// @notice Maximum live DEEP supply this controller will permit after a mint.
     uint256 public immutable mintCap;
 
-    /// @notice Timestamp after which anyone may return DEEP administration to this contract's owner.
+    /// @notice Administration deadline, zero before locking, and uint40 max after permanent return.
     uint40 public tokenAdministrationEndsAt;
-    /// @notice Whether DEEP administration has already been returned.
-    bool public tokenAdministrationReturned;
 
     event MintedWithVesting(
         address indexed caller,
@@ -98,7 +96,7 @@ contract DeepstateMinterController is OwnableRoles, ReentrancyGuard {
     function unlockTokenAdministration() external {
         uint40 endsAt = tokenAdministrationEndsAt;
         if (endsAt == 0) revert TokenAdministrationNotActive();
-        if (tokenAdministrationReturned) revert TokenAdministrationAlreadyReturned();
+        if (endsAt == type(uint40).max) revert TokenAdministrationAlreadyReturned();
 
         address owner_ = owner();
         if (block.timestamp < endsAt) revert TokenAdministrationActive(endsAt);
@@ -106,7 +104,7 @@ contract DeepstateMinterController is OwnableRoles, ReentrancyGuard {
         bytes32 tokenAdminRole = deepstateToken.DEFAULT_ADMIN_ROLE();
         if (!deepstateToken.hasRole(tokenAdminRole, address(this))) revert ControllerNotTokenAdmin();
 
-        tokenAdministrationReturned = true;
+        tokenAdministrationEndsAt = type(uint40).max;
         // Grant first so DeepstateToken's final-admin invariant cannot strand the token.
         deepstateToken.grantRole(tokenAdminRole, owner_);
         deepstateToken.renounceRole(tokenAdminRole, address(this));
