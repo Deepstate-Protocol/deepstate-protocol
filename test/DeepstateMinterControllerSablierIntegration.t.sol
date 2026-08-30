@@ -55,7 +55,11 @@ contract DeepstateMinterControllerSablierIntegrationTest is Test {
         assertFalse(sablier.isCancelable(streamId));
         assertFalse(sablier.isTransferable(streamId));
         assertEq(sablier.streamedAmountOf(streamId), 0);
+        assertEq(deep.balanceOf(mintRecipient), 70e18);
         assertEq(deep.balanceOf(address(sablier)), vestingAmount);
+        assertEq(deep.balanceOf(address(minterController)), 0);
+        assertEq(deep.allowance(address(minterController), address(sablier)), 0);
+        assertEq(deep.totalSupply(), 70e18 + vestingAmount);
 
         vm.warp(startTime + 365 days / 2);
         assertEq(sablier.streamedAmountOf(streamId), vestingAmount / 2);
@@ -86,5 +90,19 @@ contract DeepstateMinterControllerSablierIntegrationTest is Test {
 
         assertEq(sablier.ownerOf(streamId), recipient);
         assertEq(deep.balanceOf(address(sablier)), 30e18);
+    }
+
+    function test_RealSablierConsumesOnlyNewlyMintedVestingAmount() public {
+        uint256 preexistingBalance = 11e18;
+        deep.grantRole(deep.MINTER_ROLE(), address(this));
+        deep.mint(address(minterController), preexistingBalance);
+
+        uint256 streamId = minterController.mint(mintRecipient, 70e18);
+
+        assertEq(sablier.getDepositedAmount(streamId), 30e18);
+        assertEq(deep.balanceOf(address(sablier)), 30e18);
+        assertEq(deep.balanceOf(address(minterController)), preexistingBalance);
+        assertEq(deep.allowance(address(minterController), address(sablier)), 0);
+        assertEq(deep.totalSupply(), preexistingBalance + 100e18);
     }
 }

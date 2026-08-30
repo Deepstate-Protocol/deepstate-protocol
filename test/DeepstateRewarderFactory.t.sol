@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {Test} from "forge-std/Test.sol";
 import {Ownable} from "solady/auth/Ownable.sol";
@@ -18,13 +17,15 @@ import {MockSablierLockupLinearV4} from "./mocks/MockSablierLockupLinearV4.sol";
 
 contract InvalidRewardTokenMinterController is IDeepstateMinterController {
     address internal immutable _deepstateToken;
+    address internal immutable _owner;
 
     constructor(address deepstateToken_) {
         _deepstateToken = deepstateToken_;
+        _owner = msg.sender;
     }
 
-    function hasRole(bytes32, address) external pure returns (bool) {
-        return true;
+    function owner() external view returns (address) {
+        return _owner;
     }
 
     function deepstateToken() external view returns (address) {
@@ -63,7 +64,7 @@ contract DeepstateRewarderFactoryTest is Test {
         minterController = _newMinterController(address(this), deep);
         factory = new DeepstateRewarderFactory(address(this), address(routerController), address(minterController));
 
-        minterController.grantRole(minterController.MINTER_ROLE(), address(factory));
+        minterController.grantRoles(address(factory), minterController.MINTER_ROLE());
         deepstate.transferOwnership(address(routerController));
         routerController.setHookManager(address(factory));
         factory.setController(controller);
@@ -82,7 +83,7 @@ contract DeepstateRewarderFactoryTest is Test {
         assertEq(factory.INITIAL_FUNDING(), 100_000_000e18);
         assertTrue(deep.hasRole(deep.MINTER_ROLE(), address(minterController)));
         assertFalse(deep.hasRole(deep.MINTER_ROLE(), address(factory)));
-        assertTrue(minterController.hasRole(minterController.MINTER_ROLE(), address(factory)));
+        assertTrue(minterController.hasAnyRole(address(factory), minterController.MINTER_ROLE()));
         assertEq(deepstate.owner(), address(routerController));
         assertEq(routerController.hookManager(), address(factory));
         assertEq(factory.nextDeploymentAt(), 0);
@@ -115,7 +116,9 @@ contract DeepstateRewarderFactoryTest is Test {
 
         DeepstateMinterController mismatchedMinter = _newMinterController(alice, deep);
         vm.expectRevert(
-            abi.encodeWithSelector(DeepstateRewarderFactory.MinterControllerAdminMismatch.selector, address(this))
+            abi.encodeWithSelector(
+                DeepstateRewarderFactory.MinterControllerOwnerMismatch.selector, address(this), alice
+            )
         );
         new DeepstateRewarderFactory(address(this), address(routerController), address(mismatchedMinter));
 
@@ -142,7 +145,7 @@ contract DeepstateRewarderFactoryTest is Test {
         secondFactory.setController(controller);
 
         vm.startPrank(governance);
-        secondMinterController.grantRole(secondMinterController.MINTER_ROLE(), address(secondFactory));
+        secondMinterController.grantRoles(address(secondFactory), secondMinterController.MINTER_ROLE());
         secondRouterController.setHookManager(address(secondFactory));
         secondFactory.setController(controller);
         vm.stopPrank();
@@ -306,9 +309,7 @@ contract DeepstateRewarderFactoryTest is Test {
         vm.prank(controller);
         DeepstateRewarderV2 rewarder = factory.deployMarket(_market(TOKEN_A, TOKEN_B));
 
-        minterController.grantRole(minterController.MINTER_ROLE(), address(this));
         minterController.mint(address(rewarder), 900_000_000e18);
-        minterController.revokeRole(minterController.MINTER_ROLE(), address(this));
         assertEq(deep.balanceOf(address(rewarder)), 1_000_000_000e18);
         uint256 vested = _vestingAllocation(100_000_000e18) + _vestingAllocation(900_000_000e18);
         assertEq(deep.balanceOf(address(sablier)), vested);
@@ -373,7 +374,7 @@ contract DeepstateRewarderFactoryTest is Test {
             new DeepstateRewarderFactory(address(this), address(secondRouterController), address(minterController));
         secondRouter.setPoolHookConfig(TOKEN_C, TOKEN_D, alice, true, false);
         secondRouter.transferOwnership(address(secondRouterController));
-        minterController.grantRole(minterController.MINTER_ROLE(), address(secondFactory));
+        minterController.grantRoles(address(secondFactory), minterController.MINTER_ROLE());
         secondRouterController.setHookManager(address(secondFactory));
         secondFactory.setController(controller);
 
@@ -401,13 +402,7 @@ contract DeepstateRewarderFactoryTest is Test {
         DeepstateRewarderFactory.MarketConfig memory config = _market(TOKEN_A, TOKEN_B);
         address predicted = secondFactory.predictRewarderAddress(config, 0);
 
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector,
-                address(secondFactory),
-                secondMinterController.MINTER_ROLE()
-            )
-        );
+        vm.expectRevert(Ownable.Unauthorized.selector);
         vm.prank(controller);
         secondFactory.deployMarket(config);
 
@@ -426,7 +421,7 @@ contract DeepstateRewarderFactoryTest is Test {
         DeepstateRewarderFactory secondFactory = new DeepstateRewarderFactory(
             address(this), address(secondRouterController), address(secondMinterController)
         );
-        secondMinterController.grantRole(secondMinterController.MINTER_ROLE(), address(secondFactory));
+        secondMinterController.grantRoles(address(secondFactory), secondMinterController.MINTER_ROLE());
         secondRouterController.setHookManager(address(secondFactory));
         secondFactory.setController(controller);
 
@@ -450,7 +445,7 @@ contract DeepstateRewarderFactoryTest is Test {
         DeepstateRewarderFactory secondFactory = new DeepstateRewarderFactory(
             address(this), address(secondRouterController), address(secondMinterController)
         );
-        secondMinterController.grantRole(secondMinterController.MINTER_ROLE(), address(secondFactory));
+        secondMinterController.grantRoles(address(secondFactory), secondMinterController.MINTER_ROLE());
         secondRouter.transferOwnership(address(secondRouterController));
         secondFactory.setController(controller);
 

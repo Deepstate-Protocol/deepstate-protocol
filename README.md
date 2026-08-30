@@ -60,8 +60,9 @@ proposals can therefore execute immediately after voting ends.
 
 ## Controlled Minting
 
-`DeepstateMinterController` is the operational DEEP minter. Governance grants
-its `MINTER_ROLE` only to approved issuance contracts, such as
+`DeepstateMinterController` is the operational DEEP minter. It uses Solady
+`OwnableRoles`: governance is the owner and may grant the controller's
+`MINTER_ROLE` bit only to approved issuance contracts, such as
 `DeepstateRewarderFactory`. For every requested mint `M`, the controller mints
 `M` as the primary 70% tranche and mints `floor(M * 30 / 70)` to Sablier
 Lockup v4.0.1 as the recipient's 30% tranche. Each recipient allocation gets

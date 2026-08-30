@@ -2,10 +2,10 @@
 pragma solidity 0.8.28;
 
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {Test} from "forge-std/Test.sol";
 import {Ownable} from "solady/auth/Ownable.sol";
+import {ReentrancyGuard} from "solady/utils/ReentrancyGuard.sol";
 
 import {DeepstateMinterController} from "../src/DeepstateMinterController.sol";
 import {DeepstateToken} from "../src/DeepstateToken.sol";
@@ -44,8 +44,9 @@ contract DeepstateMinterControllerTest is Test {
         assertEq(minterController.owner(), address(this));
         assertEq(minterController.tokenAdministrationEndsAt(), 0);
         assertFalse(minterController.tokenAdministrationReturned());
-        assertTrue(minterController.hasRole(minterController.DEFAULT_ADMIN_ROLE(), address(this)));
-        assertFalse(minterController.hasRole(minterController.MINTER_ROLE(), address(this)));
+        assertEq(minterController.MINTER_ROLE(), 1);
+        assertEq(minterController.rolesOf(address(this)), 0);
+        assertFalse(minterController.hasAnyRole(address(this), minterController.MINTER_ROLE()));
         assertTrue(deep.hasRole(deep.MINTER_ROLE(), address(minterController)));
     }
 
@@ -173,10 +174,8 @@ contract DeepstateMinterControllerTest is Test {
 
         minterController.transferOwnership(newGovernance);
         assertEq(minterController.owner(), newGovernance);
-        assertFalse(minterController.hasRole(minterController.DEFAULT_ADMIN_ROLE(), address(this)));
-        assertTrue(minterController.hasRole(minterController.DEFAULT_ADMIN_ROLE(), newGovernance));
-        assertFalse(minterController.hasRole(minterController.MINTER_ROLE(), address(this)));
-        assertFalse(minterController.hasRole(minterController.MINTER_ROLE(), newGovernance));
+        assertFalse(minterController.hasAnyRole(address(this), minterController.MINTER_ROLE()));
+        assertFalse(minterController.hasAnyRole(newGovernance, minterController.MINTER_ROLE()));
 
         vm.warp(minterController.tokenAdministrationEndsAt());
         vm.prank(unauthorized);
@@ -194,18 +193,14 @@ contract DeepstateMinterControllerTest is Test {
             new DeepstateMinterController(address(this), address(deep), address(sablier), recipient, MINT_CAP);
         deep.grantRole(deep.MINTER_ROLE(), address(ownerController));
 
-        assertFalse(ownerController.hasRole(ownerController.MINTER_ROLE(), address(this)));
+        assertFalse(ownerController.hasAnyRole(address(this), ownerController.MINTER_ROLE()));
         ownerController.mint(mintRecipient, 100e18);
         ownerController.transferOwnership(newGovernance);
 
-        assertFalse(ownerController.hasRole(ownerController.MINTER_ROLE(), address(this)));
-        assertFalse(ownerController.hasRole(ownerController.MINTER_ROLE(), newGovernance));
+        assertFalse(ownerController.hasAnyRole(address(this), ownerController.MINTER_ROLE()));
+        assertFalse(ownerController.hasAnyRole(newGovernance, ownerController.MINTER_ROLE()));
 
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector, address(this), ownerController.MINTER_ROLE()
-            )
-        );
+        vm.expectRevert(Ownable.Unauthorized.selector);
         ownerController.mint(mintRecipient, 100e18);
 
         vm.prank(newGovernance);
@@ -216,53 +211,39 @@ contract DeepstateMinterControllerTest is Test {
     }
 
     function test_OwnerCanMintAfterItsMinterRoleIsRevoked() public {
-        bytes32 minterRole = minterController.MINTER_ROLE();
-        minterController.grantRole(minterRole, address(this));
-        minterController.revokeRole(minterRole, address(this));
+        uint256 minterRole = minterController.MINTER_ROLE();
+        minterController.grantRoles(address(this), minterRole);
+        minterController.revokeRoles(address(this), minterRole);
 
-        assertFalse(minterController.hasRole(minterRole, address(this)));
+        assertFalse(minterController.hasAnyRole(address(this), minterRole));
         minterController.mint(mintRecipient, 70e18);
         assertEq(deep.balanceOf(mintRecipient), 70e18);
         assertEq(deep.balanceOf(address(sablier)), 30e18);
     }
 
-    function test_TwoStepOwnershipHandoverSynchronizesControllerAdmin() public {
+    function test_TwoStepOwnershipHandoverDoesNotMutateRoles() public {
         vm.prank(newGovernance);
         minterController.requestOwnershipHandover();
         minterController.completeOwnershipHandover(newGovernance);
 
         assertEq(minterController.owner(), newGovernance);
-        assertFalse(minterController.hasRole(minterController.DEFAULT_ADMIN_ROLE(), address(this)));
-        assertTrue(minterController.hasRole(minterController.DEFAULT_ADMIN_ROLE(), newGovernance));
-        assertFalse(minterController.hasRole(minterController.MINTER_ROLE(), address(this)));
-        assertFalse(minterController.hasRole(minterController.MINTER_ROLE(), newGovernance));
+        assertEq(minterController.rolesOf(address(this)), 0);
+        assertEq(minterController.rolesOf(newGovernance), 0);
     }
 
     function test_TransferOwnershipToCurrentOwnerPreservesRoles() public {
         minterController.transferOwnership(address(this));
 
         assertEq(minterController.owner(), address(this));
-        assertTrue(minterController.hasRole(minterController.DEFAULT_ADMIN_ROLE(), address(this)));
-        assertFalse(minterController.hasRole(minterController.MINTER_ROLE(), address(this)));
+        assertEq(minterController.rolesOf(address(this)), 0);
 
         minterController.mint(mintRecipient, 100e18);
         assertEq(deep.balanceOf(mintRecipient), 100e18);
     }
 
-    function test_ControllerOwnerCannotRenounceOrLoseDefaultAdmin() public {
-        bytes32 controllerAdminRole = minterController.DEFAULT_ADMIN_ROLE();
-
+    function test_ControllerOwnerCannotRenounceOwnership() public {
         vm.expectRevert(Ownable.NewOwnerIsZeroAddress.selector);
         minterController.renounceOwnership();
-
-        vm.expectRevert(DeepstateMinterController.OwnerMustRetainDefaultAdmin.selector);
-        minterController.revokeRole(controllerAdminRole, address(this));
-
-        vm.expectRevert(DeepstateMinterController.OwnerMustRetainDefaultAdmin.selector);
-        minterController.renounceRole(controllerAdminRole, address(this));
-
-        vm.expectRevert(DeepstateMinterController.OwnerMustRetainDefaultAdmin.selector);
-        minterController.grantRole(controllerAdminRole, unauthorized);
     }
 
     function test_RevertUnlockBeforeLockAfterUnlockOrWithoutTokenAdmin() public {
@@ -349,48 +330,37 @@ contract DeepstateMinterControllerTest is Test {
     }
 
     function test_RevertWhenCallerLacksControllerMinterRole() public {
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector, unauthorized, minterController.MINTER_ROLE()
-            )
-        );
+        vm.expectRevert(Ownable.Unauthorized.selector);
         vm.prank(unauthorized);
         minterController.mint(mintRecipient, 100e18);
     }
 
-    function test_AdminCanGrantAndRevokeControllerMinterRole() public {
-        minterController.grantRole(minterController.MINTER_ROLE(), unauthorized);
+    function test_OwnerCanGrantAndRevokeControllerMinterRole() public {
+        minterController.grantRoles(unauthorized, minterController.MINTER_ROLE());
         vm.prank(unauthorized);
         minterController.mint(mintRecipient, 100e18);
 
-        minterController.revokeRole(minterController.MINTER_ROLE(), unauthorized);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector, unauthorized, minterController.MINTER_ROLE()
-            )
-        );
+        minterController.revokeRoles(unauthorized, minterController.MINTER_ROLE());
+        vm.expectRevert(Ownable.Unauthorized.selector);
         vm.prank(unauthorized);
         minterController.mint(mintRecipient, 100e18);
     }
 
     function test_ControllerMinterCanRenounceRole() public {
-        bytes32 minterRole = minterController.MINTER_ROLE();
-        minterController.grantRole(minterRole, unauthorized);
+        uint256 minterRole = minterController.MINTER_ROLE();
+        minterController.grantRoles(unauthorized, minterRole);
 
         vm.prank(unauthorized);
-        minterController.renounceRole(minterRole, unauthorized);
+        minterController.renounceRoles(minterRole);
 
-        assertFalse(minterController.hasRole(minterRole, unauthorized));
+        assertFalse(minterController.hasAnyRole(unauthorized, minterRole));
     }
 
-    function test_RevertWhenNonAdminChangesMinterRole() public {
-        bytes32 minterRole = minterController.MINTER_ROLE();
-        bytes32 adminRole = minterController.DEFAULT_ADMIN_ROLE();
-        vm.expectRevert(
-            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, unauthorized, adminRole)
-        );
+    function test_RevertWhenNonOwnerChangesMinterRole() public {
+        uint256 minterRole = minterController.MINTER_ROLE();
+        vm.expectRevert(Ownable.Unauthorized.selector);
         vm.prank(unauthorized);
-        minterController.grantRole(minterRole, unauthorized);
+        minterController.grantRoles(unauthorized, minterRole);
     }
 
     function test_RevertForZeroMintRecipientOrDustAmount() public {
@@ -440,31 +410,15 @@ contract DeepstateMinterControllerTest is Test {
     }
 
     function test_SablierCannotReenterEvenWhenIncorrectlyGrantedMinterRole() public {
-        minterController.grantRole(minterController.MINTER_ROLE(), address(sablier));
+        minterController.grantRoles(address(sablier), minterController.MINTER_ROLE());
         sablier.setReentry(
             address(minterController), abi.encodeCall(DeepstateMinterController.mint, (mintRecipient, 100e18))
         );
 
-        vm.expectRevert(ReentrancyGuard.ReentrancyGuardReentrantCall.selector);
+        vm.expectRevert(ReentrancyGuard.Reentrancy.selector);
         minterController.mint(mintRecipient, 100e18);
 
         assertEq(deep.totalSupply(), 0);
-        assertEq(sablier.nextStreamId(), 1);
-    }
-
-    function test_MissingSablierTokenPullRollsBackBothMintsAndStream() public {
-        sablier.setSkipTokenPull(true);
-        uint256 vestingAmount = Math.mulDiv(100e18, 30_00, 70_00);
-
-        vm.expectRevert(
-            abi.encodeWithSelector(DeepstateMinterController.StreamFundingMismatch.selector, 0, vestingAmount)
-        );
-        minterController.mint(mintRecipient, 100e18);
-
-        assertEq(deep.totalSupply(), 0);
-        assertEq(deep.balanceOf(mintRecipient), 0);
-        assertEq(deep.balanceOf(address(minterController)), 0);
-        assertEq(deep.allowance(address(minterController), address(sablier)), 0);
         assertEq(sablier.nextStreamId(), 1);
     }
 
@@ -495,6 +449,5 @@ contract DeepstateMinterControllerTest is Test {
     function _newControllerWithCap(uint256 cap) internal returns (DeepstateMinterController controller) {
         controller = new DeepstateMinterController(address(this), address(deep), address(sablier), recipient, cap);
         deep.grantRole(deep.MINTER_ROLE(), address(controller));
-        controller.grantRole(controller.MINTER_ROLE(), address(this));
     }
 }

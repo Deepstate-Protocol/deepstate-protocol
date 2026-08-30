@@ -29,7 +29,6 @@ contract MockSablierLockupLinearV4 is ISablierLockupLinearV4 {
 
     uint256 public nextStreamId = 1;
     bool public revertCreate;
-    bool public skipTokenPull;
     address public reentryTarget;
     bytes public reentryData;
     mapping(uint256 streamId => Stream stream) private _streams;
@@ -38,10 +37,6 @@ contract MockSablierLockupLinearV4 is ISablierLockupLinearV4 {
 
     function setRevertCreate(bool value) external {
         revertCreate = value;
-    }
-
-    function setSkipTokenPull(bool value) external {
-        skipTokenPull = value;
     }
 
     function setReentry(address target, bytes calldata data) external {
@@ -88,6 +83,6 @@ contract MockSablierLockupLinearV4 is ISablierLockupLinearV4 {
             totalDuration: durations.total
         });
 
-        if (!skipTokenPull) params.token.safeTransferFrom(msg.sender, address(this), params.depositAmount);
+        params.token.safeTransferFrom(msg.sender, address(this), params.depositAmount);
     }
 }

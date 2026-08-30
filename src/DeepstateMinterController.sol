@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity 0.8.28;
 
-import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
-import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {Lockup} from "@sablier/lockup/src/types/Lockup.sol";
 import {LockupLinear} from "@sablier/lockup/src/types/LockupLinear.sol";
-import {Ownable} from "solady/auth/Ownable.sol";
+import {OwnableRoles} from "solady/auth/OwnableRoles.sol";
+import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
+import {ReentrancyGuard} from "solady/utils/ReentrancyGuard.sol";
+import {SafeCastLib} from "solady/utils/SafeCastLib.sol";
+import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
 
 import {DeepstateToken} from "./DeepstateToken.sol";
 import {ISablierLockupLinearV4} from "./interfaces/ISablierLockupLinearV4.sol";
@@ -18,10 +17,10 @@ import {ISablierLockupLinearV4} from "./interfaces/ISablierLockupLinearV4.sol";
 /// @notice Allocates 30% of every authorized DEEP issuance to a vesting recipient.
 /// @dev The recipient allocation is placed in a new non-cancelable, non-transferable Sablier
 /// Lockup v4 linear stream. This contract temporarily administers DEEP while remaining owned by governance.
-contract DeepstateMinterController is AccessControl, Ownable, ReentrancyGuard {
-    using SafeERC20 for IERC20;
+contract DeepstateMinterController is OwnableRoles, ReentrancyGuard {
+    using SafeTransferLib for address;
 
-    bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
+    uint256 public constant MINTER_ROLE = 1 << 0;
     uint256 public constant RECIPIENT_ALLOCATION_BPS = 30_00;
     uint256 public constant PRIMARY_ALLOCATION_BPS = 70_00;
     uint40 public constant VESTING_DURATION = 365 days;
@@ -57,13 +56,11 @@ contract DeepstateMinterController is AccessControl, Ownable, ReentrancyGuard {
     error InvalidMintRecipient();
     error MintAmountTooSmall();
     error VestingAmountTooLarge(uint256 amount);
-    error StreamFundingMismatch(uint256 expectedBalance, uint256 actualBalance);
     error ControllerNotTokenAdmin();
     error TokenAdministrationAlreadyActivated();
     error TokenAdministrationAlreadyReturned();
     error TokenAdministrationNotActive();
     error TokenAdministrationActive(uint40 endsAt);
-    error OwnerMustRetainDefaultAdmin();
     error MintCapExceeded(uint256 cap, uint256 attemptedSupply);
 
     constructor(address owner_, address deepstateToken_, address sablierLockup_, address recipient_, uint256 mintCap_) {
@@ -78,12 +75,6 @@ contract DeepstateMinterController is AccessControl, Ownable, ReentrancyGuard {
         recipient = recipient_;
         mintCap = mintCap_;
         _initializeOwner(owner_);
-        _grantRole(DEFAULT_ADMIN_ROLE, owner_);
-    }
-
-    modifier onlyMinterOrOwner() {
-        _checkMinterOrOwner();
-        _;
     }
 
     /// @notice Lock DEEP administration in this contract for the initial two-year term.
@@ -97,7 +88,7 @@ contract DeepstateMinterController is AccessControl, Ownable, ReentrancyGuard {
             deepstateToken.grantRole(deepstateToken.MINTER_ROLE(), address(this));
         }
 
-        uint40 endsAt = SafeCast.toUint40(block.timestamp + TOKEN_ADMINISTRATION_DURATION);
+        uint40 endsAt = SafeCastLib.toUint40(block.timestamp + TOKEN_ADMINISTRATION_DURATION);
         tokenAdministrationEndsAt = endsAt;
         emit TokenAdministrationActivated(endsAt);
     }
@@ -123,33 +114,40 @@ contract DeepstateMinterController is AccessControl, Ownable, ReentrancyGuard {
         emit TokenAdministrationReturned(owner_, msg.sender);
     }
 
+    /// @notice Ownership cannot be renounced while this contract may administer DEEP.
+    function renounceOwnership() public payable override onlyOwner {
+        revert NewOwnerIsZeroAddress();
+    }
+
     /// @notice Mint the 70% primary tranche `amount` to `to` and the 30% tranche into a one-year stream.
     /// @dev The recipient amount is `floor(amount * 30 / 70)`. Amounts that round it to zero revert.
-    function mint(address to, uint256 amount) external onlyMinterOrOwner nonReentrant returns (uint256 streamId) {
+    function mint(address to, uint256 amount)
+        external
+        onlyOwnerOrRoles(MINTER_ROLE)
+        nonReentrant
+        returns (uint256 streamId)
+    {
         if (to == address(0)) revert InvalidMintRecipient();
 
-        uint256 vestingAmount = Math.mulDiv(amount, RECIPIENT_ALLOCATION_BPS, PRIMARY_ALLOCATION_BPS);
+        uint256 vestingAmount = FixedPointMathLib.fullMulDiv(amount, RECIPIENT_ALLOCATION_BPS, PRIMARY_ALLOCATION_BPS);
         if (vestingAmount == 0) revert MintAmountTooSmall();
         if (vestingAmount > type(uint128).max) revert VestingAmountTooLarge(vestingAmount);
-        uint128 streamAmount = SafeCast.toUint128(vestingAmount);
+        uint128 streamAmount = SafeCastLib.toUint128(vestingAmount);
 
         uint256 mintSupply = amount + vestingAmount;
         uint256 attemptedSupply = deepstateToken.totalSupply() + mintSupply;
         if (attemptedSupply > mintCap) revert MintCapExceeded(mintCap, attemptedSupply);
 
-        IERC20 token = IERC20(address(deepstateToken));
-        uint256 balanceBefore = token.balanceOf(address(this));
-
         deepstateToken.mint(to, amount);
         deepstateToken.mint(address(this), vestingAmount);
 
-        token.forceApprove(address(sablierLockup), vestingAmount);
+        address(deepstateToken).safeApproveWithRetry(address(sablierLockup), vestingAmount);
         streamId = sablierLockup.createWithDurationsLL(
             Lockup.CreateWithDurations({
                 sender: address(this),
                 recipient: recipient,
                 depositAmount: streamAmount,
-                token: token,
+                token: IERC20(address(deepstateToken)),
                 cancelable: false,
                 transferable: false,
                 shape: "Deepstate allocation"
@@ -158,44 +156,8 @@ contract DeepstateMinterController is AccessControl, Ownable, ReentrancyGuard {
             0,
             LockupLinear.Durations({cliff: 0, total: VESTING_DURATION})
         );
-        token.forceApprove(address(sablierLockup), 0);
-
-        uint256 balanceAfter = token.balanceOf(address(this));
-        if (balanceAfter != balanceBefore) revert StreamFundingMismatch(balanceBefore, balanceAfter);
+        address(deepstateToken).safeApproveWithRetry(address(sablierLockup), 0);
 
         emit MintedWithVesting(msg.sender, to, amount, recipient, vestingAmount, streamId);
-    }
-
-    /// @dev Keep EIP-173 ownership and AccessControl administration synchronized.
-    function _setOwner(address newOwner) internal override {
-        if (newOwner == address(0)) revert NewOwnerIsZeroAddress();
-
-        address previousOwner = owner();
-        super._setOwner(newOwner);
-        if (newOwner != previousOwner) {
-            _grantRole(DEFAULT_ADMIN_ROLE, newOwner);
-            if (previousOwner != address(0)) {
-                _revokeRole(DEFAULT_ADMIN_ROLE, previousOwner);
-            }
-        }
-    }
-
-    function grantRole(bytes32 role, address account) public override {
-        if (role == DEFAULT_ADMIN_ROLE && account != owner()) revert OwnerMustRetainDefaultAdmin();
-        super.grantRole(role, account);
-    }
-
-    function revokeRole(bytes32 role, address account) public override {
-        if (role == DEFAULT_ADMIN_ROLE && account == owner()) revert OwnerMustRetainDefaultAdmin();
-        super.revokeRole(role, account);
-    }
-
-    function renounceRole(bytes32 role, address callerConfirmation) public override {
-        if (role == DEFAULT_ADMIN_ROLE && callerConfirmation == owner()) revert OwnerMustRetainDefaultAdmin();
-        super.renounceRole(role, callerConfirmation);
-    }
-
-    function _checkMinterOrOwner() internal view {
-        if (msg.sender != owner()) _checkRole(MINTER_ROLE);
     }
 }
