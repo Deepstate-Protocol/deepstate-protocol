@@ -6,10 +6,11 @@ import {Ownable} from "solady/auth/Ownable.sol";
 import {DeepstateRewarderV2} from "./DeepstateRewarderV2.sol";
 import {DeepstateRouterController, IDeepstateRouterAdmin} from "./DeepstateRouterController.sol";
 import {DeepstateToken} from "./DeepstateToken.sol";
+import {IDeepstateMinterController} from "./interfaces/IDeepstateMinterController.sol";
 
 /// @title Deepstate Rewarder Factory
 /// @notice Governance-owned CREATE2 factory for controller-launched market reward programs.
-/// @dev The factory must hold DEEP's MINTER_ROLE and be the router controller's hook manager.
+/// @dev The factory must hold the minter controller's MINTER_ROLE and be the router controller's hook manager.
 contract DeepstateRewarderFactory is Ownable {
     struct MarketConfig {
         address token0;
@@ -33,6 +34,7 @@ contract DeepstateRewarderFactory is Ownable {
 
     DeepstateRouterController public immutable routerController;
     IDeepstateRouterAdmin public immutable deepstate;
+    IDeepstateMinterController public immutable minterController;
     DeepstateToken public immutable rewardToken;
 
     /// @notice Revocable address permitted to launch and retire factory markets.
@@ -61,6 +63,8 @@ contract DeepstateRewarderFactory is Ownable {
     error InvalidOwner();
     error InvalidRouterController();
     error RouterControllerOwnerMismatch(address expected, address actual);
+    error InvalidMinterController();
+    error MinterControllerAdminMismatch(address expected);
     error InvalidRewardToken();
     error InvalidPool();
     error InvalidHookFlags();
@@ -70,12 +74,14 @@ contract DeepstateRewarderFactory is Ownable {
     error UnexpectedPoolHook(bytes32 poolId, address expected, address actual);
     error MarketNotActive(bytes32 poolId);
 
-    constructor(address owner_, address routerController_, address rewardToken_) {
+    constructor(address owner_, address routerController_, address minterController_) {
         if (owner_ == address(0)) revert InvalidOwner();
         if (routerController_ == address(0) || routerController_.code.length == 0) {
             revert InvalidRouterController();
         }
-        if (rewardToken_ == address(0) || rewardToken_.code.length == 0) revert InvalidRewardToken();
+        if (minterController_ == address(0) || minterController_.code.length == 0) {
+            revert InvalidMinterController();
+        }
 
         _initializeOwner(owner_);
         routerController = DeepstateRouterController(routerController_);
@@ -84,6 +90,12 @@ contract DeepstateRewarderFactory is Ownable {
             revert RouterControllerOwnerMismatch(owner_, routerControllerOwner);
         }
         deepstate = routerController.deepstate();
+        minterController = IDeepstateMinterController(minterController_);
+        if (!minterController.hasRole(bytes32(0), owner_)) {
+            revert MinterControllerAdminMismatch(owner_);
+        }
+        address rewardToken_ = minterController.rewardToken();
+        if (rewardToken_ == address(0) || rewardToken_.code.length == 0) revert InvalidRewardToken();
         rewardToken = DeepstateToken(rewardToken_);
     }
 
@@ -140,7 +152,7 @@ contract DeepstateRewarderFactory is Ownable {
         activeRewarder[poolId_] = address(rewarder);
         rewarderPool[address(rewarder)] = poolId_;
 
-        rewardToken.mint(address(rewarder), INITIAL_FUNDING);
+        minterController.mint(address(rewarder), INITIAL_FUNDING);
         routerController.setPoolHookConfig(
             config.token0, config.token1, address(rewarder), config.token0Active, config.token1Active
         );

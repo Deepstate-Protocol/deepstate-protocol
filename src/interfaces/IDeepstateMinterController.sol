@@ -1,0 +1,9 @@
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.28;
+
+/// @notice Factory-facing interface for policy-controlled DEEP minting.
+interface IDeepstateMinterController {
+    function hasRole(bytes32 role, address account) external view returns (bool);
+    function rewardToken() external view returns (address);
+    function mint(address to, uint256 amount) external returns (uint256 streamId);
+}

@@ -58,6 +58,27 @@ The deployment deliberately does not install a timelock. The Governor remains
 the direct owner and executor for the vault, rewarder, and router. Successful
 proposals can therefore execute immediately after voting ends.
 
+## Controlled Minting
+
+`DeepstateMinterController` is the operational DEEP minter. Governance grants
+its `MINTER_ROLE` only to approved issuance contracts, such as
+`DeepstateRewarderFactory`. For every requested mint `M`, the controller mints
+`M` to the requested address and an additional `floor(30% * M)` to Sablier
+Lockup v4.0.1. Each recipient allocation gets its own linear 365-day stream.
+The vesting recipient and Sablier contract are immutable constructor settings;
+streams are non-cancelable and their NFTs are non-transferable.
+
+The 30% is additional issuance, not a split of `M`. A factory market therefore
+receives its complete 100,000,000 DEEP initial funding while a separate
+30,000,000 DEEP stream is created, for 130,000,000 DEEP total issuance. If a
+market is retired, its unspent rewarder balance is burned, but the independent
+recipient stream continues vesting.
+
+This policy is enforceable only while `DeepstateMinterController` is the sole
+operational holder of `DeepstateToken.MINTER_ROLE`. Governance administers both
+role systems and must not grant the token-level role directly to the factory or
+another minter that can bypass the controller.
+
 ## Reward Schedule
 
 The deployment creates one immutable rewarder for NVDA/USDG. Each side starts

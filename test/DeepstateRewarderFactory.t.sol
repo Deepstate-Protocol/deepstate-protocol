@@ -7,10 +7,33 @@ import {Ownable} from "solady/auth/Ownable.sol";
 import {DeepstateV1} from "deepstate-contracts/DeepstateV1.sol";
 
 import {DeepstateRewarder} from "../src/DeepstateRewarder.sol";
+import {DeepstateMinterController} from "../src/DeepstateMinterController.sol";
 import {DeepstateRewarderFactory} from "../src/DeepstateRewarderFactory.sol";
 import {DeepstateRewarderV2} from "../src/DeepstateRewarderV2.sol";
 import {DeepstateRouterController} from "../src/DeepstateRouterController.sol";
 import {DeepstateToken} from "../src/DeepstateToken.sol";
+import {IDeepstateMinterController} from "../src/interfaces/IDeepstateMinterController.sol";
+import {MockSablierLockupLinearV4} from "./mocks/MockSablierLockupLinearV4.sol";
+
+contract InvalidRewardTokenMinterController is IDeepstateMinterController {
+    address internal immutable _rewardToken;
+
+    constructor(address rewardToken_) {
+        _rewardToken = rewardToken_;
+    }
+
+    function hasRole(bytes32, address) external pure returns (bool) {
+        return true;
+    }
+
+    function rewardToken() external view returns (address) {
+        return _rewardToken;
+    }
+
+    function mint(address, uint256) external pure returns (uint256) {
+        return 0;
+    }
+}
 
 contract DeepstateRewarderFactoryTest is Test {
     address internal constant TOKEN_A = address(0x1000);
@@ -21,20 +44,25 @@ contract DeepstateRewarderFactoryTest is Test {
     DeepstateToken internal deep;
     DeepstateV1 internal deepstate;
     DeepstateRouterController internal routerController;
+    DeepstateMinterController internal minterController;
     DeepstateRewarderFactory internal factory;
+    MockSablierLockupLinearV4 internal sablier;
 
     address internal controller = makeAddr("controller");
     address internal alice = makeAddr("alice");
+    address internal vestingRecipient = makeAddr("vestingRecipient");
 
     function setUp() public {
         vm.warp(1_000_000);
 
         deep = new DeepstateToken(address(this), "Deepstate", "DEEP");
+        sablier = new MockSablierLockupLinearV4();
         deepstate = new DeepstateV1();
         routerController = new DeepstateRouterController(address(this), address(deepstate));
-        factory = new DeepstateRewarderFactory(address(this), address(routerController), address(deep));
+        minterController = _newMinterController(address(this), deep);
+        factory = new DeepstateRewarderFactory(address(this), address(routerController), address(minterController));
 
-        deep.grantRole(deep.MINTER_ROLE(), address(factory));
+        minterController.grantRole(minterController.MINTER_ROLE(), address(factory));
         deepstate.transferOwnership(address(routerController));
         routerController.setHookManager(address(factory));
         factory.setController(controller);
@@ -45,12 +73,15 @@ contract DeepstateRewarderFactoryTest is Test {
         assertEq(factory.controller(), controller);
         assertEq(address(factory.routerController()), address(routerController));
         assertEq(address(factory.deepstate()), address(deepstate));
+        assertEq(address(factory.minterController()), address(minterController));
         assertEq(address(factory.rewardToken()), address(deep));
         assertEq(factory.DEPLOYMENT_COOLDOWN(), 3 days);
         assertEq(factory.EMISSION_DURATION(), 395 days);
         assertEq(factory.SIDE_EMISSION_CAP(), 500_000_000e18);
         assertEq(factory.INITIAL_FUNDING(), 100_000_000e18);
-        assertTrue(deep.hasRole(deep.MINTER_ROLE(), address(factory)));
+        assertTrue(deep.hasRole(deep.MINTER_ROLE(), address(minterController)));
+        assertFalse(deep.hasRole(deep.MINTER_ROLE(), address(factory)));
+        assertTrue(minterController.hasRole(minterController.MINTER_ROLE(), address(factory)));
         assertEq(deepstate.owner(), address(routerController));
         assertEq(routerController.hookManager(), address(factory));
         assertEq(factory.nextDeploymentAt(), 0);
@@ -59,13 +90,13 @@ contract DeepstateRewarderFactoryTest is Test {
 
     function test_ConstructorValidation() public {
         vm.expectRevert(DeepstateRewarderFactory.InvalidOwner.selector);
-        new DeepstateRewarderFactory(address(0), address(routerController), address(deep));
+        new DeepstateRewarderFactory(address(0), address(routerController), address(minterController));
 
         vm.expectRevert(DeepstateRewarderFactory.InvalidRouterController.selector);
-        new DeepstateRewarderFactory(address(this), address(0), address(deep));
+        new DeepstateRewarderFactory(address(this), address(0), address(minterController));
 
         vm.expectRevert(DeepstateRewarderFactory.InvalidRouterController.selector);
-        new DeepstateRewarderFactory(address(this), alice, address(deep));
+        new DeepstateRewarderFactory(address(this), alice, address(minterController));
 
         DeepstateRouterController mismatchedController = new DeepstateRouterController(alice, address(deepstate));
         vm.expectRevert(
@@ -73,13 +104,27 @@ contract DeepstateRewarderFactoryTest is Test {
                 DeepstateRewarderFactory.RouterControllerOwnerMismatch.selector, address(this), alice
             )
         );
-        new DeepstateRewarderFactory(address(this), address(mismatchedController), address(deep));
+        new DeepstateRewarderFactory(address(this), address(mismatchedController), address(minterController));
 
-        vm.expectRevert(DeepstateRewarderFactory.InvalidRewardToken.selector);
+        vm.expectRevert(DeepstateRewarderFactory.InvalidMinterController.selector);
         new DeepstateRewarderFactory(address(this), address(routerController), address(0));
 
-        vm.expectRevert(DeepstateRewarderFactory.InvalidRewardToken.selector);
+        vm.expectRevert(DeepstateRewarderFactory.InvalidMinterController.selector);
         new DeepstateRewarderFactory(address(this), address(routerController), alice);
+
+        DeepstateMinterController mismatchedMinter = _newMinterController(alice, deep);
+        vm.expectRevert(
+            abi.encodeWithSelector(DeepstateRewarderFactory.MinterControllerAdminMismatch.selector, address(this))
+        );
+        new DeepstateRewarderFactory(address(this), address(routerController), address(mismatchedMinter));
+
+        InvalidRewardTokenMinterController zeroTokenController = new InvalidRewardTokenMinterController(address(0));
+        vm.expectRevert(DeepstateRewarderFactory.InvalidRewardToken.selector);
+        new DeepstateRewarderFactory(address(this), address(routerController), address(zeroTokenController));
+
+        InvalidRewardTokenMinterController eoaTokenController = new InvalidRewardTokenMinterController(alice);
+        vm.expectRevert(DeepstateRewarderFactory.InvalidRewardToken.selector);
+        new DeepstateRewarderFactory(address(this), address(routerController), address(eoaTokenController));
     }
 
     function test_GovernanceOwnerIsIndependentFromFactoryDeployer() public {
@@ -88,15 +133,16 @@ contract DeepstateRewarderFactoryTest is Test {
         DeepstateV1 secondRouter = new DeepstateV1();
         DeepstateRouterController secondRouterController =
             new DeepstateRouterController(governance, address(secondRouter));
+        DeepstateMinterController secondMinterController = _newMinterController(governance, secondToken);
         DeepstateRewarderFactory secondFactory =
-            new DeepstateRewarderFactory(governance, address(secondRouterController), address(secondToken));
-        secondToken.grantRole(secondToken.MINTER_ROLE(), address(secondFactory));
+            new DeepstateRewarderFactory(governance, address(secondRouterController), address(secondMinterController));
         secondRouter.transferOwnership(address(secondRouterController));
 
         vm.expectRevert(Ownable.Unauthorized.selector);
         secondFactory.setController(controller);
 
         vm.startPrank(governance);
+        secondMinterController.grantRole(secondMinterController.MINTER_ROLE(), address(secondFactory));
         secondRouterController.setHookManager(address(secondFactory));
         secondFactory.setController(controller);
         vm.stopPrank();
@@ -107,6 +153,7 @@ contract DeepstateRewarderFactoryTest is Test {
         assertEq(rewarder.owner(), governance);
         assertEq(rewarder.factory(), address(secondFactory));
         assertEq(secondToken.balanceOf(address(rewarder)), 100_000_000e18);
+        assertEq(secondToken.balanceOf(address(sablier)), 30_000_000e18);
     }
 
     function test_ControllerDeploysPredictedCreate2MarketWithFixedScheduleAndFunding() public {
@@ -136,7 +183,8 @@ contract DeepstateRewarderFactoryTest is Test {
         assertEq(rewarder.token1StartQuantity(), 1e6);
         assertEq(rewarder.token1MaxQuantity(), 1_000_000e6);
         assertEq(deep.balanceOf(address(rewarder)), 100_000_000e18);
-        assertEq(deep.totalSupply(), 100_000_000e18);
+        assertEq(deep.balanceOf(address(sablier)), 30_000_000e18);
+        assertEq(deep.totalSupply(), 130_000_000e18);
         assertEq(deepstate.poolHook(poolId), address(rewarder));
         assertEq(factory.activeRewarder(poolId), address(rewarder));
         assertEq(factory.rewarderPool(address(rewarder)), poolId);
@@ -165,7 +213,8 @@ contract DeepstateRewarderFactoryTest is Test {
 
         assertEq(factory.deploymentCount(), 2);
         assertEq(deep.balanceOf(address(second)), 100_000_000e18);
-        assertEq(deep.totalSupply(), 200_000_000e18);
+        assertEq(deep.balanceOf(address(sablier)), 60_000_000e18);
+        assertEq(deep.totalSupply(), 260_000_000e18);
     }
 
     function test_GovernanceCanDeployWithoutControllerButStillObeysCooldown() public {
@@ -221,7 +270,8 @@ contract DeepstateRewarderFactoryTest is Test {
         assertEq(factory.rewarderPool(address(rewarder)), bytes32(0));
         assertEq(deep.balanceOf(address(rewarder)), 0);
         assertEq(deep.balanceOf(address(factory)), 0);
-        assertEq(deep.totalSupply(), 0);
+        assertEq(deep.balanceOf(address(sablier)), 30_000_000e18);
+        assertEq(deep.totalSupply(), 30_000_000e18);
     }
 
     function test_ControllerCannotWithdrawFromRewarderDirectly() public {
@@ -240,16 +290,17 @@ contract DeepstateRewarderFactoryTest is Test {
         vm.prank(controller);
         DeepstateRewarderV2 rewarder = factory.deployMarket(_market(TOKEN_A, TOKEN_B));
 
-        deep.grantRole(deep.MINTER_ROLE(), address(this));
-        deep.mint(address(rewarder), 900_000_000e18);
-        deep.revokeRole(deep.MINTER_ROLE(), address(this));
+        minterController.grantRole(minterController.MINTER_ROLE(), address(this));
+        minterController.mint(address(rewarder), 900_000_000e18);
+        minterController.revokeRole(minterController.MINTER_ROLE(), address(this));
         assertEq(deep.balanceOf(address(rewarder)), 1_000_000_000e18);
+        assertEq(deep.balanceOf(address(sablier)), 300_000_000e18);
 
         vm.prank(controller);
         uint256 burned = factory.removeMarket(TOKEN_A, TOKEN_B);
 
         assertEq(burned, 1_000_000_000e18);
-        assertEq(deep.totalSupply(), 0);
+        assertEq(deep.totalSupply(), 300_000_000e18);
     }
 
     function test_GovernanceCanRemoveMarketAfterRevokingController() public {
@@ -260,7 +311,7 @@ contract DeepstateRewarderFactoryTest is Test {
         uint256 burned = factory.removeMarket(TOKEN_A, TOKEN_B);
 
         assertEq(burned, 100_000_000e18);
-        assertEq(deep.totalSupply(), 0);
+        assertEq(deep.totalSupply(), 30_000_000e18);
     }
 
     function test_RemovedPoolCanBeResetWithFreshCreate2AddressAfterCooldown() public {
@@ -281,7 +332,9 @@ contract DeepstateRewarderFactoryTest is Test {
         assertNotEq(address(first), address(second));
         assertEq(address(second), predicted);
         assertEq(factory.activeRewarder(_poolId(TOKEN_A, TOKEN_B)), address(second));
-        assertEq(deep.totalSupply(), 100_000_000e18);
+        assertEq(deep.balanceOf(address(second)), 100_000_000e18);
+        assertEq(deep.balanceOf(address(sablier)), 60_000_000e18);
+        assertEq(deep.totalSupply(), 160_000_000e18);
     }
 
     function test_CannotDeployOverActiveFactoryMarketOrExistingRouterHook() public {
@@ -301,10 +354,10 @@ contract DeepstateRewarderFactoryTest is Test {
         DeepstateRouterController secondRouterController =
             new DeepstateRouterController(address(this), address(secondRouter));
         DeepstateRewarderFactory secondFactory =
-            new DeepstateRewarderFactory(address(this), address(secondRouterController), address(deep));
+            new DeepstateRewarderFactory(address(this), address(secondRouterController), address(minterController));
         secondRouter.setPoolHookConfig(TOKEN_C, TOKEN_D, alice, true, false);
         secondRouter.transferOwnership(address(secondRouterController));
-        deep.grantRole(deep.MINTER_ROLE(), address(secondFactory));
+        minterController.grantRole(minterController.MINTER_ROLE(), address(secondFactory));
         secondRouterController.setHookManager(address(secondFactory));
         secondFactory.setController(controller);
 
@@ -322,8 +375,10 @@ contract DeepstateRewarderFactoryTest is Test {
         DeepstateV1 secondRouter = new DeepstateV1();
         DeepstateRouterController secondRouterController =
             new DeepstateRouterController(address(this), address(secondRouter));
-        DeepstateRewarderFactory secondFactory =
-            new DeepstateRewarderFactory(address(this), address(secondRouterController), address(secondToken));
+        DeepstateMinterController secondMinterController = _newMinterController(address(this), secondToken);
+        DeepstateRewarderFactory secondFactory = new DeepstateRewarderFactory(
+            address(this), address(secondRouterController), address(secondMinterController)
+        );
         secondRouter.transferOwnership(address(secondRouterController));
         secondRouterController.setHookManager(address(secondFactory));
         secondFactory.setController(controller);
@@ -335,7 +390,7 @@ contract DeepstateRewarderFactoryTest is Test {
             abi.encodeWithSelector(
                 IAccessControl.AccessControlUnauthorizedAccount.selector,
                 address(secondFactory),
-                secondToken.MINTER_ROLE()
+                secondMinterController.MINTER_ROLE()
             )
         );
         vm.prank(controller);
@@ -353,9 +408,11 @@ contract DeepstateRewarderFactoryTest is Test {
         DeepstateV1 secondRouter = new DeepstateV1();
         DeepstateRouterController secondRouterController =
             new DeepstateRouterController(address(this), address(secondRouter));
-        DeepstateRewarderFactory secondFactory =
-            new DeepstateRewarderFactory(address(this), address(secondRouterController), address(secondToken));
-        secondToken.grantRole(secondToken.MINTER_ROLE(), address(secondFactory));
+        DeepstateMinterController secondMinterController = _newMinterController(address(this), secondToken);
+        DeepstateRewarderFactory secondFactory = new DeepstateRewarderFactory(
+            address(this), address(secondRouterController), address(secondMinterController)
+        );
+        secondMinterController.grantRole(secondMinterController.MINTER_ROLE(), address(secondFactory));
         secondRouterController.setHookManager(address(secondFactory));
         secondFactory.setController(controller);
 
@@ -376,9 +433,11 @@ contract DeepstateRewarderFactoryTest is Test {
         DeepstateV1 secondRouter = new DeepstateV1();
         DeepstateRouterController secondRouterController =
             new DeepstateRouterController(address(this), address(secondRouter));
-        DeepstateRewarderFactory secondFactory =
-            new DeepstateRewarderFactory(address(this), address(secondRouterController), address(secondToken));
-        secondToken.grantRole(secondToken.MINTER_ROLE(), address(secondFactory));
+        DeepstateMinterController secondMinterController = _newMinterController(address(this), secondToken);
+        DeepstateRewarderFactory secondFactory = new DeepstateRewarderFactory(
+            address(this), address(secondRouterController), address(secondMinterController)
+        );
+        secondMinterController.grantRole(secondMinterController.MINTER_ROLE(), address(secondFactory));
         secondRouter.transferOwnership(address(secondRouterController));
         secondFactory.setController(controller);
 
@@ -413,7 +472,7 @@ contract DeepstateRewarderFactoryTest is Test {
         assertEq(burned, 100_000_000e18);
         assertEq(factory.activeRewarder(poolId), address(0));
         assertEq(deep.balanceOf(address(rewarder)), 0);
-        assertEq(deep.totalSupply(), 0);
+        assertEq(deep.totalSupply(), 30_000_000e18);
     }
 
     function test_RemovalRejectsUnexpectedReplacementHook() public {
@@ -503,5 +562,13 @@ contract DeepstateRewarderFactoryTest is Test {
 
     function _poolId(address token0, address token1) internal pure returns (bytes32) {
         return keccak256(abi.encode(token0, token1));
+    }
+
+    function _newMinterController(address admin, DeepstateToken token)
+        internal
+        returns (DeepstateMinterController controller_)
+    {
+        controller_ = new DeepstateMinterController(admin, address(token), address(sablier), vestingRecipient);
+        token.grantRole(token.MINTER_ROLE(), address(controller_));
     }
 }
