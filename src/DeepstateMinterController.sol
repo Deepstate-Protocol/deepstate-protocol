@@ -154,7 +154,6 @@ contract DeepstateMinterController is OwnableRoles, ReentrancyGuard {
             0,
             LockupLinear.Durations({cliff: 0, total: VESTING_DURATION})
         );
-        address(deepstateToken).safeApproveWithRetry(address(sablierLockup), 0);
 
         emit MintedWithVesting(msg.sender, to, amount, recipient, vestingAmount, streamId);
     }
