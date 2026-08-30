@@ -10,8 +10,8 @@ import {IDeepstateMinterController} from "./interfaces/IDeepstateMinterControlle
 import {IDeepstateV1} from "./interfaces/IDeepstateV1.sol";
 
 /// @title Deepstate Rewarder Factory
-/// @notice Governance-owned CREATE2 factory for controller-launched market reward programs.
-/// @dev The factory must hold the minter controller's MINTER_ROLE and be the router controller's hook manager.
+/// @notice Governance-owned CREATE2 factory for operator-launched market reward programs.
+/// @dev The factory must hold the minter controller's MINTER_ROLE and be the V1 controller's hook manager.
 contract DeepstateRewarderFactory is Ownable {
     struct MarketConfig {
         address token0;
@@ -24,7 +24,7 @@ contract DeepstateRewarderFactory is Ownable {
         bool token1Active;
     }
 
-    /// @notice Minimum interval between successful controller or governance market deployments.
+    /// @notice Minimum interval between successful operator or governance market deployments.
     uint256 public constant DEPLOYMENT_COOLDOWN = 3 days;
     /// @notice Duration encoded into every factory rewarder.
     uint32 public constant EMISSION_DURATION = 395 days;
@@ -33,13 +33,13 @@ contract DeepstateRewarderFactory is Ownable {
     /// @notice Initial DEEP minted to each rewarder. Further funding requires governance.
     uint256 public constant INITIAL_FUNDING = 100_000_000e18;
 
-    DeepstateV1Controller public immutable routerController;
+    DeepstateV1Controller public immutable deepstateV1Controller;
     IDeepstateV1 public immutable deepstate;
     IDeepstateMinterController public immutable minterController;
     DeepstateToken public immutable rewardToken;
 
-    /// @notice Revocable address permitted to launch and retire factory markets.
-    address public controller;
+    /// @notice Revocable operator permitted to launch and retire factory markets.
+    address public operator;
     /// @notice Earliest timestamp at which another market may be deployed.
     uint256 public nextDeploymentAt;
     /// @notice Nonce assigned to the next successful CREATE2 deployment.
@@ -48,7 +48,7 @@ contract DeepstateRewarderFactory is Ownable {
     mapping(bytes32 poolId => address rewarder) public activeRewarder;
     mapping(address rewarder => bytes32 poolId) public rewarderPool;
 
-    event ControllerSet(address indexed previousController, address indexed newController);
+    event OperatorSet(address indexed previousOperator, address indexed newOperator);
     event MarketDeployed(
         bytes32 indexed poolId,
         uint256 indexed deploymentNonce,
@@ -62,8 +62,8 @@ contract DeepstateRewarderFactory is Ownable {
     event MarketRemoved(bytes32 indexed poolId, address indexed rewarder, uint256 burnedAmount);
 
     error InvalidOwner();
-    error InvalidRouterController();
-    error RouterControllerOwnerMismatch(address expected, address actual);
+    error InvalidDeepstateV1Controller();
+    error DeepstateV1ControllerOwnerMismatch(address expected, address actual);
     error InvalidMinterController();
     error MinterControllerOwnerMismatch(address expected, address actual);
     error InvalidRewardToken();
@@ -75,22 +75,22 @@ contract DeepstateRewarderFactory is Ownable {
     error UnexpectedPoolHook(bytes32 poolId, address expected, address actual);
     error MarketNotActive(bytes32 poolId);
 
-    constructor(address owner_, address routerController_, address minterController_) {
+    constructor(address owner_, address deepstateV1Controller_, address minterController_) {
         if (owner_ == address(0)) revert InvalidOwner();
-        if (routerController_ == address(0) || routerController_.code.length == 0) {
-            revert InvalidRouterController();
+        if (deepstateV1Controller_ == address(0) || deepstateV1Controller_.code.length == 0) {
+            revert InvalidDeepstateV1Controller();
         }
         if (minterController_ == address(0) || minterController_.code.length == 0) {
             revert InvalidMinterController();
         }
 
         _initializeOwner(owner_);
-        routerController = DeepstateV1Controller(routerController_);
-        address routerControllerOwner = routerController.owner();
-        if (routerControllerOwner != owner_) {
-            revert RouterControllerOwnerMismatch(owner_, routerControllerOwner);
+        deepstateV1Controller = DeepstateV1Controller(deepstateV1Controller_);
+        address deepstateV1ControllerOwner = deepstateV1Controller.owner();
+        if (deepstateV1ControllerOwner != owner_) {
+            revert DeepstateV1ControllerOwnerMismatch(owner_, deepstateV1ControllerOwner);
         }
-        deepstate = routerController.deepstate();
+        deepstate = deepstateV1Controller.deepstate();
         minterController = IDeepstateMinterController(minterController_);
         address minterControllerOwner = minterController.owner();
         if (minterControllerOwner != owner_) {
@@ -101,23 +101,23 @@ contract DeepstateRewarderFactory is Ownable {
         rewardToken = DeepstateToken(deepstateToken_);
     }
 
-    modifier onlyControllerOrOwner() {
-        _checkControllerOrOwner();
+    modifier onlyOperatorOrOwner() {
+        _checkOperatorOrOwner();
         _;
     }
 
-    /// @notice Appoint or revoke the operational controller. Set zero to revoke without replacement.
-    function setController(address newController) external onlyOwner {
-        address previousController = controller;
-        controller = newController;
-        emit ControllerSet(previousController, newController);
+    /// @notice Appoint or revoke the operator. Set zero to revoke without replacement.
+    function setOperator(address newOperator) external onlyOwner {
+        address previousOperator = operator;
+        operator = newOperator;
+        emit OperatorSet(previousOperator, newOperator);
     }
 
     /// @notice Deploy, initially fund, and install a deterministic rewarder for one pool.
     /// @dev Both sides share a one-billion-DEEP schedule but receive only 100 million DEEP initially.
     function deployMarket(MarketConfig calldata config)
         external
-        onlyControllerOrOwner
+        onlyOperatorOrOwner
         returns (DeepstateRewarderV2 rewarder)
     {
         bytes32 poolId_ = _validateMarket(config);
@@ -155,7 +155,7 @@ contract DeepstateRewarderFactory is Ownable {
         rewarderPool[address(rewarder)] = poolId_;
 
         minterController.mint(address(rewarder), INITIAL_FUNDING);
-        routerController.setPoolHookConfig(
+        deepstateV1Controller.setPoolHookConfig(
             config.token0, config.token1, address(rewarder), config.token0Active, config.token1Active
         );
 
@@ -174,18 +174,14 @@ contract DeepstateRewarderFactory is Ownable {
     /// @notice Remove a factory market and burn its remaining DEEP balance.
     /// @dev Retiring a market deliberately makes its unpaid claims unclaimable unless governance
     /// later funds the detached rewarder directly.
-    function removeMarket(address token0, address token1)
-        external
-        onlyControllerOrOwner
-        returns (uint256 burnedAmount)
-    {
+    function removeMarket(address token0, address token1) external onlyOperatorOrOwner returns (uint256 burnedAmount) {
         bytes32 poolId_ = _poolId(token0, token1);
         address rewarder = activeRewarder[poolId_];
         if (rewarder == address(0)) revert MarketNotActive(poolId_);
 
         address currentHook = deepstate.poolHook(poolId_);
         if (currentHook == rewarder) {
-            routerController.setPoolHookConfig(token0, token1, address(0), false, false);
+            deepstateV1Controller.setPoolHookConfig(token0, token1, address(0), false, false);
         } else if (currentHook != address(0)) {
             revert UnexpectedPoolHook(poolId_, rewarder, currentHook);
         }
@@ -245,7 +241,7 @@ contract DeepstateRewarderFactory is Ownable {
         poolId_ = keccak256(abi.encode(token0, token1));
     }
 
-    function _checkControllerOrOwner() private view {
-        if (msg.sender != controller) _checkOwner();
+    function _checkOperatorOrOwner() private view {
+        if (msg.sender != operator) _checkOwner();
     }
 }
