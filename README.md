@@ -64,9 +64,17 @@ proposals can therefore execute immediately after voting ends.
 its `MINTER_ROLE` only to approved issuance contracts, such as
 `DeepstateRewarderFactory`. For every requested mint `M`, the controller mints
 `M` to the requested address and an additional `floor(30% * M)` to Sablier
-Lockup v4.0.1. Each recipient allocation gets its own linear 365-day stream.
+Lockup v4.0.1. Each recipient allocation gets its own linear two-year stream.
 The vesting recipient and Sablier contract are immutable constructor settings;
 streams are non-cancelable and their NFTs are non-transferable.
+
+The controller also has an immutable deployment-time live-supply cap. The
+intended production value is 20,000,000,000 DEEP. Before every mint, the
+controller checks the existing DEEP `totalSupply()` plus both the requested
+amount and its additional 30% allocation. Burns reduce total supply and reopen
+capacity below the cap. This is a controller-level soft cap: governance can
+bypass it only by authorizing a different token-level minter after token
+administration returns.
 
 The 30% is additional issuance, not a split of `M`. A factory market therefore
 receives its complete 100,000,000 DEEP initial funding while a separate
@@ -75,9 +83,20 @@ market is retired, its unspent rewarder balance is burned, but the independent
 recipient stream continues vesting.
 
 This policy is enforceable only while `DeepstateMinterController` is the sole
-operational holder of `DeepstateToken.MINTER_ROLE`. Governance administers both
-role systems and must not grant the token-level role directly to the factory or
-another minter that can bypass the controller.
+operational holder of `DeepstateToken.MINTER_ROLE`. Governance must not grant
+the token-level role directly to the factory or another minter that can bypass
+the controller.
+
+For the initial two-year issuance term, the controller temporarily holds
+`DeepstateToken.DEFAULT_ADMIN_ROLE` while governance remains the controller's
+owner. Governance activates the term only after granting the token admin role
+to the controller. Activation also ensures the controller has the token minter
+role. Governance may return token administration early; at or after the exact
+two-year deadline, anyone may trigger the return. The return grants the token
+admin role to the controller's current owner before the controller renounces
+it, preserving the token's final-admin invariant throughout the transition.
+The controller retains its ordinary token minter role until governance revokes
+it after regaining token administration.
 
 ## Reward Schedule
 

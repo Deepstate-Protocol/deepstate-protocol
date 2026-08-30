@@ -568,7 +568,9 @@ contract DeepstateRewarderFactoryTest is Test {
         internal
         returns (DeepstateMinterController controller_)
     {
-        controller_ = new DeepstateMinterController(admin, address(token), address(sablier), vestingRecipient);
+        controller_ = new DeepstateMinterController(
+            admin, address(token), address(sablier), vestingRecipient, 20_000_000_000e18
+        );
         token.grantRole(token.MINTER_ROLE(), address(controller_));
     }
 }
