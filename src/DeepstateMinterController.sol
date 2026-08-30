@@ -4,20 +4,20 @@ pragma solidity 0.8.28;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Lockup} from "@sablier/lockup/src/types/Lockup.sol";
 import {LockupLinear} from "@sablier/lockup/src/types/LockupLinear.sol";
-import {OwnableRoles} from "solady/auth/OwnableRoles.sol";
 import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {ReentrancyGuard} from "solady/utils/ReentrancyGuard.sol";
 import {SafeCastLib} from "solady/utils/SafeCastLib.sol";
 import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
 
 import {DeepstateToken} from "./DeepstateToken.sol";
+import {DeepstateController} from "./DeepstateController.sol";
 import {ISablierLockupLinearV4} from "./interfaces/ISablierLockupLinearV4.sol";
 
 /// @title Deepstate Minter Controller
 /// @notice Allocates 30% of every authorized DEEP issuance to a vesting recipient.
 /// @dev The recipient allocation is placed in a new non-cancelable, non-transferable Sablier
 /// Lockup v4 linear stream. This contract temporarily administers DEEP while remaining owned by governance.
-contract DeepstateMinterController is OwnableRoles, ReentrancyGuard {
+contract DeepstateMinterController is DeepstateController, ReentrancyGuard {
     using SafeTransferLib for address;
 
     uint256 public constant MINTER_ROLE = 1 << 0;
@@ -46,7 +46,6 @@ contract DeepstateMinterController is OwnableRoles, ReentrancyGuard {
     event TokenAdministrationActivated(uint40 indexed endsAt);
     event TokenAdministrationReturned(address indexed owner, address indexed caller);
 
-    error InvalidOwner();
     error InvalidDeepstateToken();
     error InvalidSablierLockup();
     error InvalidRecipient();
@@ -61,8 +60,9 @@ contract DeepstateMinterController is OwnableRoles, ReentrancyGuard {
     error TokenAdministrationActive(uint40 endsAt);
     error MintCapExceeded(uint256 cap, uint256 attemptedSupply);
 
-    constructor(address owner_, address deepstateToken_, address sablierLockup_, address recipient_, uint256 mintCap_) {
-        if (owner_ == address(0)) revert InvalidOwner();
+    constructor(address owner_, address deepstateToken_, address sablierLockup_, address recipient_, uint256 mintCap_)
+        DeepstateController(owner_)
+    {
         if (deepstateToken_ == address(0) || deepstateToken_.code.length == 0) revert InvalidDeepstateToken();
         if (sablierLockup_ == address(0) || sablierLockup_.code.length == 0) revert InvalidSablierLockup();
         if (recipient_ == address(0)) revert InvalidRecipient();
@@ -72,7 +72,6 @@ contract DeepstateMinterController is OwnableRoles, ReentrancyGuard {
         sablierLockup = ISablierLockupLinearV4(sablierLockup_);
         recipient = recipient_;
         mintCap = mintCap_;
-        _initializeOwner(owner_);
     }
 
     /// @notice Lock DEEP administration in this contract for the initial two-year term.
@@ -110,11 +109,6 @@ contract DeepstateMinterController is OwnableRoles, ReentrancyGuard {
         deepstateToken.renounceRole(tokenAdminRole, address(this));
 
         emit TokenAdministrationReturned(owner_, msg.sender);
-    }
-
-    /// @notice Ownership cannot be renounced while this contract may administer DEEP.
-    function renounceOwnership() public payable override onlyOwner {
-        revert NewOwnerIsZeroAddress();
     }
 
     /// @notice Mint the 70% primary tranche `amount` to `to` and the 30% tranche into a one-year stream.

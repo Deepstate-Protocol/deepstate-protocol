@@ -66,7 +66,7 @@ contract DeepstateRewarderFactoryTest is Test {
 
         minterController.grantRoles(address(factory), minterController.MINTER_ROLE());
         deepstate.transferOwnership(address(deepstateV1Controller));
-        deepstateV1Controller.setHookManager(address(factory));
+        deepstateV1Controller.grantRoles(address(factory), deepstateV1Controller.HOOK_MANAGER_ROLE());
         factory.setOperator(operator);
     }
 
@@ -85,7 +85,7 @@ contract DeepstateRewarderFactoryTest is Test {
         assertFalse(deep.hasRole(deep.MINTER_ROLE(), address(factory)));
         assertTrue(minterController.hasAnyRole(address(factory), minterController.MINTER_ROLE()));
         assertEq(deepstate.owner(), address(deepstateV1Controller));
-        assertEq(deepstateV1Controller.hookManager(), address(factory));
+        assertTrue(deepstateV1Controller.hasAnyRole(address(factory), deepstateV1Controller.HOOK_MANAGER_ROLE()));
         assertEq(factory.nextDeploymentAt(), 0);
     }
 
@@ -146,7 +146,7 @@ contract DeepstateRewarderFactoryTest is Test {
 
         vm.startPrank(governance);
         secondMinterController.grantRoles(address(secondFactory), secondMinterController.MINTER_ROLE());
-        secondDeepstateV1Controller.setHookManager(address(secondFactory));
+        secondDeepstateV1Controller.grantRoles(address(secondFactory), secondDeepstateV1Controller.HOOK_MANAGER_ROLE());
         secondFactory.setOperator(operator);
         vm.stopPrank();
         vm.prank(operator);
@@ -253,12 +253,13 @@ contract DeepstateRewarderFactoryTest is Test {
         DeepstateRewarderV2 rewarder = factory.deployMarket(config);
         bytes32 poolId = _poolId(TOKEN_A, TOKEN_B);
 
-        vm.expectEmit(true, true, false, true, address(factory));
-        emit DeepstateRewarderFactory.MarketRemoved(poolId, address(rewarder), 100_000_000e18);
+        vm.expectEmit(false, false, false, true, address(rewarder));
+        emit DeepstateRewarderV2.RewardBalanceBurned(100_000_000e18);
+        vm.expectEmit(true, true, false, false, address(factory));
+        emit DeepstateRewarderFactory.MarketRemoved(poolId, address(rewarder));
         vm.prank(operator);
-        uint256 burned = factory.removeMarket(TOKEN_A, TOKEN_B);
+        factory.removeMarket(TOKEN_A, TOKEN_B);
 
-        assertEq(burned, 100_000_000e18);
         assertEq(deepstate.poolHook(poolId), address(0));
         assertEq(factory.activeRewarder(poolId), address(0));
         assertEq(factory.rewarderPool(address(rewarder)), bytes32(0));
@@ -277,9 +278,8 @@ contract DeepstateRewarderFactoryTest is Test {
         deep.transfer(alice, claimed);
 
         vm.prank(operator);
-        uint256 burned = factory.removeMarket(TOKEN_A, TOKEN_B);
+        factory.removeMarket(TOKEN_A, TOKEN_B);
 
-        assertEq(burned, 75_000_000e18);
         assertEq(deep.balanceOf(address(rewarder)), 0);
         assertEq(deep.balanceOf(alice), claimed);
         assertEq(deep.balanceOf(address(sablier)), _vestingAllocation(100_000_000e18));
@@ -308,9 +308,8 @@ contract DeepstateRewarderFactoryTest is Test {
         assertEq(deep.balanceOf(address(sablier)), vested);
 
         vm.prank(operator);
-        uint256 burned = factory.removeMarket(TOKEN_A, TOKEN_B);
+        factory.removeMarket(TOKEN_A, TOKEN_B);
 
-        assertEq(burned, 1_000_000_000e18);
         assertEq(deep.totalSupply(), vested);
     }
 
@@ -319,9 +318,8 @@ contract DeepstateRewarderFactoryTest is Test {
         factory.deployMarket(_market(TOKEN_A, TOKEN_B));
         factory.setOperator(address(0));
 
-        uint256 burned = factory.removeMarket(TOKEN_A, TOKEN_B);
+        factory.removeMarket(TOKEN_A, TOKEN_B);
 
-        assertEq(burned, 100_000_000e18);
         assertEq(deep.totalSupply(), _vestingAllocation(100_000_000e18));
     }
 
@@ -368,7 +366,7 @@ contract DeepstateRewarderFactoryTest is Test {
         secondDeepstate.setPoolHookConfig(TOKEN_C, TOKEN_D, alice, true, false);
         secondDeepstate.transferOwnership(address(secondDeepstateV1Controller));
         minterController.grantRoles(address(secondFactory), minterController.MINTER_ROLE());
-        secondDeepstateV1Controller.setHookManager(address(secondFactory));
+        secondDeepstateV1Controller.grantRoles(address(secondFactory), secondDeepstateV1Controller.HOOK_MANAGER_ROLE());
         secondFactory.setOperator(operator);
 
         bytes32 secondPoolId = _poolId(TOKEN_C, TOKEN_D);
@@ -389,7 +387,7 @@ contract DeepstateRewarderFactoryTest is Test {
             address(this), address(secondDeepstateV1Controller), address(secondMinterController)
         );
         secondDeepstate.transferOwnership(address(secondDeepstateV1Controller));
-        secondDeepstateV1Controller.setHookManager(address(secondFactory));
+        secondDeepstateV1Controller.grantRoles(address(secondFactory), secondDeepstateV1Controller.HOOK_MANAGER_ROLE());
         secondFactory.setOperator(operator);
 
         DeepstateRewarderFactory.MarketConfig memory config = _market(TOKEN_A, TOKEN_B);
@@ -413,7 +411,7 @@ contract DeepstateRewarderFactoryTest is Test {
             address(this), address(secondDeepstateV1Controller), address(secondMinterController)
         );
         secondMinterController.grantRoles(address(secondFactory), secondMinterController.MINTER_ROLE());
-        secondDeepstateV1Controller.setHookManager(address(secondFactory));
+        secondDeepstateV1Controller.grantRoles(address(secondFactory), secondDeepstateV1Controller.HOOK_MANAGER_ROLE());
         secondFactory.setOperator(operator);
 
         DeepstateRewarderFactory.MarketConfig memory config = _market(TOKEN_A, TOKEN_B);
@@ -454,7 +452,7 @@ contract DeepstateRewarderFactoryTest is Test {
         vm.prank(operator);
         DeepstateRewarderV2 rewarder = factory.deployMarket(_market(TOKEN_A, TOKEN_B));
         bytes32 poolId = _poolId(TOKEN_A, TOKEN_B);
-        deepstateV1Controller.setHookManager(address(0));
+        deepstateV1Controller.revokeRoles(address(factory), deepstateV1Controller.HOOK_MANAGER_ROLE());
 
         vm.expectRevert(Ownable.Unauthorized.selector);
         vm.prank(operator);
@@ -463,9 +461,8 @@ contract DeepstateRewarderFactoryTest is Test {
         assertEq(deep.balanceOf(address(rewarder)), 100_000_000e18);
 
         deepstateV1Controller.setPoolHookConfig(TOKEN_A, TOKEN_B, address(0), false, false);
-        uint256 burned = factory.removeMarket(TOKEN_A, TOKEN_B);
+        factory.removeMarket(TOKEN_A, TOKEN_B);
 
-        assertEq(burned, 100_000_000e18);
         assertEq(factory.activeRewarder(poolId), address(0));
         assertEq(deep.balanceOf(address(rewarder)), 0);
         assertEq(deep.totalSupply(), _vestingAllocation(100_000_000e18));

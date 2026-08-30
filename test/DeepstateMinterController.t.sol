@@ -7,6 +7,7 @@ import {Test} from "forge-std/Test.sol";
 import {Ownable} from "solady/auth/Ownable.sol";
 import {ReentrancyGuard} from "solady/utils/ReentrancyGuard.sol";
 
+import {DeepstateController} from "../src/DeepstateController.sol";
 import {DeepstateMinterController} from "../src/DeepstateMinterController.sol";
 import {DeepstateToken} from "../src/DeepstateToken.sol";
 import {MockSablierLockupLinearV4} from "./mocks/MockSablierLockupLinearV4.sol";
@@ -50,7 +51,7 @@ contract DeepstateMinterControllerTest is Test {
     }
 
     function test_ConstructorValidation() public {
-        vm.expectRevert(DeepstateMinterController.InvalidOwner.selector);
+        vm.expectRevert(DeepstateController.InvalidOwner.selector);
         new DeepstateMinterController(address(0), address(deep), address(sablier), recipient, MINT_CAP);
 
         vm.expectRevert(DeepstateMinterController.InvalidDeepstateToken.selector);

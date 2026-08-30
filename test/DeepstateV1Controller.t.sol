@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {Ownable} from "solady/auth/Ownable.sol";
 import {DeepstateV1} from "deepstate-contracts/DeepstateV1.sol";
 
+import {DeepstateController} from "../src/DeepstateController.sol";
 import {DeepstateV1Controller} from "../src/DeepstateV1Controller.sol";
 
 contract DeepstateV1ControllerTest is Test {
@@ -28,12 +29,14 @@ contract DeepstateV1ControllerTest is Test {
     function test_ImmutableConfiguration() public view {
         assertEq(controller.owner(), address(this));
         assertEq(address(controller.deepstate()), address(deepstate));
-        assertEq(controller.hookManager(), address(0));
+        assertEq(controller.HOOK_MANAGER_ROLE(), 1);
+        assertEq(controller.rolesOf(address(this)), 0);
+        assertFalse(controller.hasAnyRole(hookManager, controller.HOOK_MANAGER_ROLE()));
         assertEq(deepstate.owner(), address(controller));
     }
 
     function test_ConstructorValidation() public {
-        vm.expectRevert(DeepstateV1Controller.InvalidOwner.selector);
+        vm.expectRevert(DeepstateController.InvalidOwner.selector);
         new DeepstateV1Controller(address(0), address(deepstate));
 
         vm.expectRevert(DeepstateV1Controller.InvalidDeepstate.selector);
@@ -43,34 +46,47 @@ contract DeepstateV1ControllerTest is Test {
         new DeepstateV1Controller(address(this), alice);
     }
 
-    function test_GovernanceCanSetAndRevokeHookManager() public {
-        vm.expectEmit(true, true, false, false, address(controller));
-        emit DeepstateV1Controller.HookManagerSet(address(0), hookManager);
-        controller.setHookManager(hookManager);
-        assertEq(controller.hookManager(), hookManager);
+    function test_GovernanceCanGrantAndRevokeHookManagerRole() public {
+        controller.grantRoles(hookManager, controller.HOOK_MANAGER_ROLE());
+        assertTrue(controller.hasAnyRole(hookManager, controller.HOOK_MANAGER_ROLE()));
 
-        vm.expectEmit(true, true, false, false, address(controller));
-        emit DeepstateV1Controller.HookManagerSet(hookManager, address(0));
-        controller.setHookManager(address(0));
-        assertEq(controller.hookManager(), address(0));
+        controller.revokeRoles(hookManager, controller.HOOK_MANAGER_ROLE());
+        assertFalse(controller.hasAnyRole(hookManager, controller.HOOK_MANAGER_ROLE()));
     }
 
-    function test_OnlyGovernanceCanSetHookManager() public {
+    function test_OnlyGovernanceCanGrantOrRevokeHookManagerRole() public {
+        uint256 hookManagerRole = controller.HOOK_MANAGER_ROLE();
+
         vm.expectRevert(Ownable.Unauthorized.selector);
         vm.prank(hookManager);
-        controller.setHookManager(hookManager);
+        controller.grantRoles(hookManager, hookManagerRole);
 
         vm.expectRevert(Ownable.Unauthorized.selector);
         vm.prank(alice);
-        controller.setHookManager(alice);
+        controller.revokeRoles(hookManager, hookManagerRole);
     }
 
     function test_HookManagerCanConfigurePoolHook() public {
-        controller.setHookManager(hookManager);
+        controller.grantRoles(hookManager, controller.HOOK_MANAGER_ROLE());
 
         vm.prank(hookManager);
         controller.setPoolHookConfig(TOKEN0, TOKEN1, hook, true, false);
 
+        assertEq(deepstate.poolHook(_poolId()), hook);
+    }
+
+    function test_HookManagerRolesAreIndependent() public {
+        uint256 hookManagerRole = controller.HOOK_MANAGER_ROLE();
+        controller.grantRoles(hookManager, hookManagerRole);
+        controller.grantRoles(alice, hookManagerRole);
+        controller.revokeRoles(hookManager, hookManagerRole);
+
+        vm.expectRevert(Ownable.Unauthorized.selector);
+        vm.prank(hookManager);
+        controller.setPoolHookConfig(TOKEN0, TOKEN1, hook, true, false);
+
+        vm.prank(alice);
+        controller.setPoolHookConfig(TOKEN0, TOKEN1, hook, false, true);
         assertEq(deepstate.poolHook(_poolId()), hook);
     }
 
@@ -83,8 +99,8 @@ contract DeepstateV1ControllerTest is Test {
     }
 
     function test_RevokedHookManagerImmediatelyLosesHookAccess() public {
-        controller.setHookManager(hookManager);
-        controller.setHookManager(address(0));
+        controller.grantRoles(hookManager, controller.HOOK_MANAGER_ROLE());
+        controller.revokeRoles(hookManager, controller.HOOK_MANAGER_ROLE());
 
         vm.expectRevert(Ownable.Unauthorized.selector);
         vm.prank(hookManager);
@@ -100,7 +116,7 @@ contract DeepstateV1ControllerTest is Test {
     }
 
     function test_HookManagerCannotConfigureFeesOrTransferRouterOwnership() public {
-        controller.setHookManager(hookManager);
+        controller.grantRoles(hookManager, controller.HOOK_MANAGER_ROLE());
 
         vm.expectRevert(Ownable.Unauthorized.selector);
         vm.prank(hookManager);
@@ -134,7 +150,7 @@ contract DeepstateV1ControllerTest is Test {
     function test_ControllerCallsFailUntilItOwnsRouter() public {
         DeepstateV1 secondRouter = new DeepstateV1();
         DeepstateV1Controller secondController = new DeepstateV1Controller(address(this), address(secondRouter));
-        secondController.setHookManager(hookManager);
+        secondController.grantRoles(hookManager, secondController.HOOK_MANAGER_ROLE());
 
         vm.expectRevert(Ownable.Unauthorized.selector);
         vm.prank(hookManager);
@@ -145,6 +161,11 @@ contract DeepstateV1ControllerTest is Test {
 
         assertEq(secondRouter.poolHook(_poolId()), address(0));
         assertEq(secondRouter.owner(), address(this));
+    }
+
+    function test_ControllerOwnerCannotRenounceOwnership() public {
+        vm.expectRevert(Ownable.NewOwnerIsZeroAddress.selector);
+        controller.renounceOwnership();
     }
 
     function _poolId() private pure returns (bytes32) {

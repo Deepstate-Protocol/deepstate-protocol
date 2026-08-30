@@ -51,9 +51,8 @@ contract DeepstateRewarderV2Test is Test {
 
         vm.expectEmit(false, false, false, true, address(rewarder));
         emit DeepstateRewarderV2.RewardBalanceBurned(funding);
-        uint256 burned = rewarder.burnBalance();
+        rewarder.burnBalance();
 
-        assertEq(burned, funding);
         assertEq(rewardToken.balanceOf(address(rewarder)), 0);
         assertEq(rewardToken.totalSupply(), 0);
     }
@@ -69,15 +68,14 @@ contract DeepstateRewarderV2Test is Test {
         assertEq(rewardToken.totalSupply(), fundingBefore);
     }
 
-    function test_BurnBalanceReturnsZeroForEmptyRewarder() public {
+    function test_BurnBalanceEmitsZeroForEmptyRewarder() public {
         uint256 funding = rewardToken.balanceOf(address(rewarder));
         rewarder.burnBalance();
 
         vm.expectEmit(false, false, false, true, address(rewarder));
         emit DeepstateRewarderV2.RewardBalanceBurned(0);
-        uint256 burned = rewarder.burnBalance();
+        rewarder.burnBalance();
 
-        assertEq(burned, 0);
         assertEq(funding, uint256(SIDE_CAP) * 2);
         assertEq(rewardToken.balanceOf(address(rewarder)), 0);
         assertEq(rewardToken.totalSupply(), 0);

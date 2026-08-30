@@ -44,8 +44,8 @@ contract DeepstateRewarderV2 is DeepstateRewarder {
 
     /// @notice Burn the rewarder's entire remaining reward-token balance.
     /// @dev Outstanding claims remain accounted for and will revert until funding is restored.
-    function burnBalance() external onlyOwner returns (uint256 amount) {
-        amount = SafeTransferLib.balanceOf(rewardToken, address(this));
+    function burnBalance() external onlyOwner {
+        uint256 amount = SafeTransferLib.balanceOf(rewardToken, address(this));
         IBurnableERC20(rewardToken).burn(amount);
         emit RewardBalanceBurned(amount);
     }

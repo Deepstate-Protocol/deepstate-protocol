@@ -11,7 +11,7 @@ import {IDeepstateV1} from "./interfaces/IDeepstateV1.sol";
 
 /// @title Deepstate Rewarder Factory
 /// @notice Governance-owned factory for operator-launched market reward programs.
-/// @dev The factory must hold the minter controller's MINTER_ROLE and be the V1 controller's hook manager.
+/// @dev The factory must hold the minter controller's MINTER_ROLE and V1 controller's HOOK_MANAGER_ROLE.
 contract DeepstateRewarderFactory is Ownable {
     struct MarketConfig {
         address token0;
@@ -55,7 +55,7 @@ contract DeepstateRewarderFactory is Ownable {
         bool token0Active,
         bool token1Active
     );
-    event MarketRemoved(bytes32 indexed poolId, address indexed rewarder, uint256 burnedAmount);
+    event MarketRemoved(bytes32 indexed poolId, address indexed rewarder);
 
     error InvalidOwner();
     error InvalidDeepstateV1Controller();
@@ -154,7 +154,7 @@ contract DeepstateRewarderFactory is Ownable {
     /// @notice Remove a factory market and burn its remaining DEEP balance.
     /// @dev Retiring a market deliberately makes its unpaid claims unclaimable unless governance
     /// later funds the detached rewarder directly.
-    function removeMarket(address token0, address token1) external onlyOperatorOrOwner returns (uint256 burnedAmount) {
+    function removeMarket(address token0, address token1) external onlyOperatorOrOwner {
         bytes32 poolId_ = _poolId(token0, token1);
         address rewarder = activeRewarder[poolId_];
         if (rewarder == address(0)) revert MarketNotActive(poolId_);
@@ -168,9 +168,9 @@ contract DeepstateRewarderFactory is Ownable {
         delete activeRewarder[poolId_];
         delete rewarderPool[rewarder];
 
-        burnedAmount = DeepstateRewarderV2(rewarder).burnBalance();
+        DeepstateRewarderV2(rewarder).burnBalance();
 
-        emit MarketRemoved(poolId_, rewarder, burnedAmount);
+        emit MarketRemoved(poolId_, rewarder);
     }
 
     function _validateMarket(MarketConfig calldata config) private pure returns (bytes32 poolId_) {
