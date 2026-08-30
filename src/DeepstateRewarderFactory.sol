@@ -10,7 +10,7 @@ import {IDeepstateMinterController} from "./interfaces/IDeepstateMinterControlle
 import {IDeepstateV1} from "./interfaces/IDeepstateV1.sol";
 
 /// @title Deepstate Rewarder Factory
-/// @notice Governance-owned CREATE2 factory for operator-launched market reward programs.
+/// @notice Governance-owned factory for operator-launched market reward programs.
 /// @dev The factory must hold the minter controller's MINTER_ROLE and be the V1 controller's hook manager.
 contract DeepstateRewarderFactory is Ownable {
     struct MarketConfig {
@@ -42,8 +42,6 @@ contract DeepstateRewarderFactory is Ownable {
     address public operator;
     /// @notice Earliest timestamp at which another market may be deployed.
     uint256 public nextDeploymentAt;
-    /// @notice Nonce assigned to the next successful CREATE2 deployment.
-    uint256 public deploymentCount;
 
     mapping(bytes32 poolId => address rewarder) public activeRewarder;
     mapping(address rewarder => bytes32 poolId) public rewarderPool;
@@ -51,9 +49,7 @@ contract DeepstateRewarderFactory is Ownable {
     event OperatorSet(address indexed previousOperator, address indexed newOperator);
     event MarketDeployed(
         bytes32 indexed poolId,
-        uint256 indexed deploymentNonce,
         address indexed rewarder,
-        bytes32 salt,
         address token0,
         address token1,
         bool token0Active,
@@ -125,13 +121,9 @@ contract DeepstateRewarderFactory is Ownable {
         address existingHook = deepstate.poolHook(poolId_);
         if (existingHook != address(0)) revert ExistingPoolHook(poolId_, existingHook);
 
-        uint256 nonce = deploymentCount;
-        bytes32 salt = marketSalt(poolId_, nonce);
-
-        deploymentCount = nonce + 1;
         nextDeploymentAt = block.timestamp + DEPLOYMENT_COOLDOWN;
 
-        rewarder = new DeepstateRewarderV2{salt: salt}(
+        rewarder = new DeepstateRewarderV2(
             address(this),
             address(deepstate),
             address(rewardToken),
@@ -155,14 +147,7 @@ contract DeepstateRewarderFactory is Ownable {
         );
 
         emit MarketDeployed(
-            poolId_,
-            nonce,
-            address(rewarder),
-            salt,
-            config.token0,
-            config.token1,
-            config.token0Active,
-            config.token1Active
+            poolId_, address(rewarder), config.token0, config.token1, config.token0Active, config.token1Active
         );
     }
 
@@ -186,43 +171,6 @@ contract DeepstateRewarderFactory is Ownable {
         burnedAmount = DeepstateRewarderV2(rewarder).burnBalance();
 
         emit MarketRemoved(poolId_, rewarder, burnedAmount);
-    }
-
-    /// @notice CREATE2 salt for a pool and global deployment nonce.
-    function marketSalt(bytes32 poolId_, uint256 deploymentNonce) public pure returns (bytes32) {
-        return keccak256(abi.encode(poolId_, deploymentNonce));
-    }
-
-    /// @notice Predict a rewarder address using the factory and a deployment nonce.
-    function predictRewarderAddress(MarketConfig calldata config, uint256 deploymentNonce)
-        external
-        view
-        returns (address predicted)
-    {
-        bytes32 poolId_ = _validateMarket(config);
-        bytes32 salt = marketSalt(poolId_, deploymentNonce);
-        bytes32 initCodeHash = keccak256(
-            abi.encodePacked(
-                type(DeepstateRewarderV2).creationCode,
-                abi.encode(
-                    address(this),
-                    address(deepstate),
-                    address(rewardToken),
-                    poolId_,
-                    config.token0,
-                    config.token1,
-                    SIDE_EMISSION_CAP,
-                    EMISSION_DURATION,
-                    config.token0StartQuantity,
-                    config.token0MaxQuantity,
-                    config.token1StartQuantity,
-                    config.token1MaxQuantity
-                )
-            )
-        );
-
-        predicted =
-            address(uint160(uint256(keccak256(abi.encodePacked(bytes1(0xff), address(this), salt, initCodeHash)))));
     }
 
     function _validateMarket(MarketConfig calldata config) private pure returns (bytes32 poolId_) {

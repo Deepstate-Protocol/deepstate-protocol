@@ -87,7 +87,6 @@ contract DeepstateRewarderFactoryTest is Test {
         assertEq(deepstate.owner(), address(deepstateV1Controller));
         assertEq(deepstateV1Controller.hookManager(), address(factory));
         assertEq(factory.nextDeploymentAt(), 0);
-        assertEq(factory.deploymentCount(), 0);
     }
 
     function test_ConstructorValidation() public {
@@ -159,19 +158,16 @@ contract DeepstateRewarderFactoryTest is Test {
         assertEq(secondToken.balanceOf(address(sablier)), _vestingAllocation(100_000_000e18));
     }
 
-    function test_OperatorDeploysPredictedCreate2MarketWithFixedScheduleAndFunding() public {
+    function test_OperatorDeploysMarketWithFixedScheduleAndFunding() public {
         DeepstateRewarderFactory.MarketConfig memory config = _market(TOKEN_A, TOKEN_B);
-        address predicted = factory.predictRewarderAddress(config, 0);
         bytes32 poolId = _poolId(TOKEN_A, TOKEN_B);
-        bytes32 expectedSalt = keccak256(abi.encode(poolId, uint256(0)));
 
-        vm.expectEmit(true, true, true, true, address(factory));
-        emit DeepstateRewarderFactory.MarketDeployed(poolId, 0, predicted, expectedSalt, TOKEN_A, TOKEN_B, true, true);
+        vm.expectEmit(true, false, false, true, address(factory));
+        emit DeepstateRewarderFactory.MarketDeployed(poolId, address(0), TOKEN_A, TOKEN_B, true, true);
         vm.prank(operator);
         DeepstateRewarderV2 rewarder = factory.deployMarket(config);
 
-        assertEq(address(rewarder), predicted);
-        assertGt(predicted.code.length, 0);
+        assertGt(address(rewarder).code.length, 0);
         assertEq(rewarder.owner(), address(factory));
         assertEq(rewarder.deepstate(), address(deepstate));
         assertEq(rewarder.rewardToken(), address(deep));
@@ -190,9 +186,7 @@ contract DeepstateRewarderFactoryTest is Test {
         assertEq(deepstate.poolHook(poolId), address(rewarder));
         assertEq(factory.activeRewarder(poolId), address(rewarder));
         assertEq(factory.rewarderPool(address(rewarder)), poolId);
-        assertEq(factory.deploymentCount(), 1);
         assertEq(factory.nextDeploymentAt(), block.timestamp + 3 days);
-        assertEq(factory.marketSalt(poolId, 0), expectedSalt);
     }
 
     function test_DeploymentCooldownIsGlobalAndAllowsExactBoundary() public {
@@ -213,7 +207,6 @@ contract DeepstateRewarderFactoryTest is Test {
         vm.prank(operator);
         DeepstateRewarderV2 second = factory.deployMarket(_market(TOKEN_C, TOKEN_D));
 
-        assertEq(factory.deploymentCount(), 2);
         assertEq(deep.balanceOf(address(second)), 100_000_000e18);
         assertEq(deep.balanceOf(address(sablier)), 2 * _vestingAllocation(100_000_000e18));
         assertEq(deep.totalSupply(), 200_000_000e18 + 2 * _vestingAllocation(100_000_000e18));
@@ -239,7 +232,6 @@ contract DeepstateRewarderFactoryTest is Test {
         factory.deployMarket(_market(TOKEN_A, TOKEN_B));
 
         assertEq(factory.operator(), address(0));
-        assertEq(factory.deploymentCount(), 0);
         assertEq(deep.totalSupply(), 0);
     }
 
@@ -333,7 +325,7 @@ contract DeepstateRewarderFactoryTest is Test {
         assertEq(deep.totalSupply(), _vestingAllocation(100_000_000e18));
     }
 
-    function test_RemovedPoolCanBeResetWithFreshCreate2AddressAfterCooldown() public {
+    function test_RemovedPoolCanBeResetWithFreshAddressAfterCooldown() public {
         DeepstateRewarderFactory.MarketConfig memory config = _market(TOKEN_A, TOKEN_B);
         vm.startPrank(operator);
         DeepstateRewarderV2 first = factory.deployMarket(config);
@@ -344,12 +336,10 @@ contract DeepstateRewarderFactoryTest is Test {
         factory.deployMarket(config);
 
         vm.warp(next);
-        address predicted = factory.predictRewarderAddress(config, 1);
         DeepstateRewarderV2 second = factory.deployMarket(config);
         vm.stopPrank();
 
         assertNotEq(address(first), address(second));
-        assertEq(address(second), predicted);
         assertEq(factory.activeRewarder(_poolId(TOKEN_A, TOKEN_B)), address(second));
         assertEq(deep.balanceOf(address(second)), 100_000_000e18);
         assertEq(deep.balanceOf(address(sablier)), 2 * _vestingAllocation(100_000_000e18));
@@ -386,7 +376,6 @@ contract DeepstateRewarderFactoryTest is Test {
         vm.prank(operator);
         secondFactory.deployMarket(_market(TOKEN_C, TOKEN_D));
 
-        assertEq(secondFactory.deploymentCount(), 0);
         assertEq(deep.balanceOf(address(secondFactory)), 0);
     }
 
@@ -404,14 +393,11 @@ contract DeepstateRewarderFactoryTest is Test {
         secondFactory.setOperator(operator);
 
         DeepstateRewarderFactory.MarketConfig memory config = _market(TOKEN_A, TOKEN_B);
-        address predicted = secondFactory.predictRewarderAddress(config, 0);
 
         vm.expectRevert(Ownable.Unauthorized.selector);
         vm.prank(operator);
         secondFactory.deployMarket(config);
 
-        assertEq(predicted.code.length, 0);
-        assertEq(secondFactory.deploymentCount(), 0);
         assertEq(secondFactory.nextDeploymentAt(), 0);
         assertEq(secondToken.totalSupply(), 0);
         assertEq(secondDeepstate.poolHook(_poolId(TOKEN_A, TOKEN_B)), address(0));
@@ -431,14 +417,12 @@ contract DeepstateRewarderFactoryTest is Test {
         secondFactory.setOperator(operator);
 
         DeepstateRewarderFactory.MarketConfig memory config = _market(TOKEN_A, TOKEN_B);
-        address predicted = secondFactory.predictRewarderAddress(config, 0);
 
         vm.expectRevert(Ownable.Unauthorized.selector);
         vm.prank(operator);
         secondFactory.deployMarket(config);
 
-        assertEq(predicted.code.length, 0);
-        assertEq(secondFactory.deploymentCount(), 0);
+        assertEq(secondFactory.nextDeploymentAt(), 0);
         assertEq(secondToken.totalSupply(), 0);
     }
 
@@ -456,14 +440,12 @@ contract DeepstateRewarderFactoryTest is Test {
         secondFactory.setOperator(operator);
 
         DeepstateRewarderFactory.MarketConfig memory config = _market(TOKEN_A, TOKEN_B);
-        address predicted = secondFactory.predictRewarderAddress(config, 0);
 
         vm.expectRevert(Ownable.Unauthorized.selector);
         vm.prank(operator);
         secondFactory.deployMarket(config);
 
-        assertEq(predicted.code.length, 0);
-        assertEq(secondFactory.deploymentCount(), 0);
+        assertEq(secondFactory.nextDeploymentAt(), 0);
         assertEq(secondToken.totalSupply(), 0);
         assertEq(secondDeepstate.poolHook(_poolId(TOKEN_A, TOKEN_B)), address(0));
     }
@@ -527,7 +509,6 @@ contract DeepstateRewarderFactoryTest is Test {
         vm.prank(operator);
         factory.deployMarket(config);
 
-        assertEq(factory.deploymentCount(), 0);
         assertEq(factory.nextDeploymentAt(), 0);
         assertEq(deep.totalSupply(), 0);
     }
