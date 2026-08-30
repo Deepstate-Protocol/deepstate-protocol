@@ -136,7 +136,7 @@ contract DeepstateRewarderFactory is Ownable {
         nextDeploymentAt = block.timestamp + DEPLOYMENT_COOLDOWN;
 
         rewarder = new DeepstateRewarderV2{salt: salt}(
-            owner(),
+            address(this),
             address(deepstate),
             address(rewardToken),
             poolId_,
@@ -170,7 +170,7 @@ contract DeepstateRewarderFactory is Ownable {
         );
     }
 
-    /// @notice Remove a factory market, recover all remaining DEEP, and burn it.
+    /// @notice Remove a factory market and burn its remaining DEEP balance.
     /// @dev Retiring a market deliberately makes its unpaid claims unclaimable unless governance
     /// later funds the detached rewarder directly.
     function removeMarket(address token0, address token1)
@@ -191,8 +191,8 @@ contract DeepstateRewarderFactory is Ownable {
         delete activeRewarder[poolId_];
         delete rewarderPool[rewarder];
 
-        burnedAmount = DeepstateRewarderV2(rewarder).withdrawRewardBalance(address(this));
-        if (burnedAmount != 0) rewardToken.burn(burnedAmount);
+        burnedAmount = rewardToken.balanceOf(rewarder);
+        DeepstateRewarderV2(rewarder).burnBalance(burnedAmount);
 
         emit MarketRemoved(poolId_, rewarder, burnedAmount);
     }
@@ -202,7 +202,7 @@ contract DeepstateRewarderFactory is Ownable {
         return keccak256(abi.encode(poolId_, deploymentNonce));
     }
 
-    /// @notice Predict a rewarder address using the factory's current owner and a deployment nonce.
+    /// @notice Predict a rewarder address using the factory and a deployment nonce.
     function predictRewarderAddress(MarketConfig calldata config, uint256 deploymentNonce)
         external
         view
@@ -214,7 +214,7 @@ contract DeepstateRewarderFactory is Ownable {
             abi.encodePacked(
                 type(DeepstateRewarderV2).creationCode,
                 abi.encode(
-                    owner(),
+                    address(this),
                     address(deepstate),
                     address(rewardToken),
                     poolId_,

@@ -1,22 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-
 import {DeepstateRewarder} from "./DeepstateRewarder.sol";
+import {IBurnableERC20} from "./interfaces/IBurnableERC20.sol";
 
 /// @title Deepstate Rewarder V2
-/// @notice Extends the original rewarder with governance-controlled recovery of remaining rewards.
+/// @notice Extends the original rewarder with owner-controlled burning of remaining rewards.
+/// @dev Ownable is inherited through DeepstateRewarder.
 contract DeepstateRewarderV2 is DeepstateRewarder {
-    using SafeERC20 for IERC20;
-
-    /// @notice Factory that deployed and may retire this rewarder.
-    address public immutable factory;
-
-    event RewardBalanceWithdrawn(address indexed receiver, uint256 amount);
-
-    error InvalidReceiver();
+    event RewardBalanceBurned(uint256 amount);
 
     constructor(
         address owner_,
@@ -46,21 +38,12 @@ contract DeepstateRewarderV2 is DeepstateRewarder {
             token1StartQuantity_,
             token1MaxQuantity_
         )
-    {
-        factory = msg.sender;
-    }
+    {}
 
-    /// @notice Withdraw the rewarder's entire remaining reward-token balance.
-    /// @dev Governance owns the rewarder. Its deploying factory may also withdraw when retiring a
-    /// market. Outstanding claims remain accounted for and will revert until funding is restored.
-    function withdrawRewardBalance(address receiver) external returns (uint256 amount) {
-        if (msg.sender != factory) _checkOwner();
-        if (receiver == address(0)) revert InvalidReceiver();
-
-        IERC20 token = IERC20(rewardToken);
-        amount = token.balanceOf(address(this));
-        if (amount != 0) token.safeTransfer(receiver, amount);
-
-        emit RewardBalanceWithdrawn(receiver, amount);
+    /// @notice Burn an amount of the reward token held by this rewarder.
+    /// @dev Outstanding claims remain accounted for and will revert until funding is restored.
+    function burnBalance(uint256 amount) external onlyOwner {
+        IBurnableERC20(rewardToken).burn(amount);
+        emit RewardBalanceBurned(amount);
     }
 }

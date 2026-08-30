@@ -149,8 +149,7 @@ contract DeepstateRewarderFactoryTest is Test {
         DeepstateRewarderV2 rewarder = secondFactory.deployMarket(_market(TOKEN_A, TOKEN_B));
 
         assertEq(secondFactory.owner(), governance);
-        assertEq(rewarder.owner(), governance);
-        assertEq(rewarder.factory(), address(secondFactory));
+        assertEq(rewarder.owner(), address(secondFactory));
         assertEq(secondToken.balanceOf(address(rewarder)), 100_000_000e18);
         assertEq(secondToken.balanceOf(address(sablier)), 30_000_000e18);
     }
@@ -168,8 +167,7 @@ contract DeepstateRewarderFactoryTest is Test {
 
         assertEq(address(rewarder), predicted);
         assertGt(predicted.code.length, 0);
-        assertEq(rewarder.owner(), address(this));
-        assertEq(rewarder.factory(), address(factory));
+        assertEq(rewarder.owner(), address(factory));
         assertEq(rewarder.deepstate(), address(deepstate));
         assertEq(rewarder.rewardToken(), address(deep));
         assertEq(rewarder.poolId(), poolId);
@@ -219,7 +217,7 @@ contract DeepstateRewarderFactoryTest is Test {
     function test_GovernanceCanDeployWithoutControllerButStillObeysCooldown() public {
         factory.setController(address(0));
         DeepstateRewarderV2 rewarder = factory.deployMarket(_market(TOKEN_A, TOKEN_B));
-        assertEq(rewarder.owner(), address(this));
+        assertEq(rewarder.owner(), address(factory));
 
         uint256 next = factory.nextDeploymentAt();
         vm.expectRevert(abi.encodeWithSelector(DeepstateRewarderFactory.DeploymentCooldown.selector, next));
@@ -273,13 +271,13 @@ contract DeepstateRewarderFactoryTest is Test {
         assertEq(deep.totalSupply(), 30_000_000e18);
     }
 
-    function test_ControllerCannotWithdrawFromRewarderDirectly() public {
+    function test_ControllerCannotBurnRewarderDirectly() public {
         vm.prank(controller);
         DeepstateRewarderV2 rewarder = factory.deployMarket(_market(TOKEN_A, TOKEN_B));
 
         vm.expectRevert(Ownable.Unauthorized.selector);
         vm.prank(controller);
-        rewarder.withdrawRewardBalance(controller);
+        rewarder.burnBalance(1);
 
         assertEq(deep.balanceOf(address(rewarder)), 100_000_000e18);
         assertEq(deep.balanceOf(controller), 0);
