@@ -70,7 +70,7 @@ jobs:
           case "$CHECK" in
             quality)
               forge fmt --check
-              forge build --sizes --threads 0
+              forge build --sizes --threads 0 --skip test
               bash test/DeployProductionScript.sh
               ;;
             tests)
