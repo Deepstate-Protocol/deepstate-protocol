@@ -95,9 +95,9 @@ contract DeepstateRewarderFactory is Ownable {
         if (!minterController.hasRole(bytes32(0), owner_)) {
             revert MinterControllerAdminMismatch(owner_);
         }
-        address rewardToken_ = minterController.rewardToken();
-        if (rewardToken_ == address(0) || rewardToken_.code.length == 0) revert InvalidRewardToken();
-        rewardToken = DeepstateToken(rewardToken_);
+        address deepstateToken_ = minterController.deepstateToken();
+        if (deepstateToken_ == address(0) || deepstateToken_.code.length == 0) revert InvalidRewardToken();
+        rewardToken = DeepstateToken(deepstateToken_);
     }
 
     modifier onlyControllerOrOwner() {

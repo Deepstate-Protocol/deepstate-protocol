@@ -33,7 +33,7 @@ contract DeepstateMinterControllerTest is Test {
     }
 
     function test_ImmutableConfigurationAndInitialAuthority() public view {
-        assertEq(address(minterController.rewardToken()), address(deep));
+        assertEq(address(minterController.deepstateToken()), address(deep));
         assertEq(address(minterController.sablierLockup()), address(sablier));
         assertEq(minterController.recipient(), recipient);
         assertEq(minterController.mintCap(), MINT_CAP);
@@ -53,10 +53,10 @@ contract DeepstateMinterControllerTest is Test {
         vm.expectRevert(DeepstateMinterController.InvalidOwner.selector);
         new DeepstateMinterController(address(0), address(deep), address(sablier), recipient, MINT_CAP);
 
-        vm.expectRevert(DeepstateMinterController.InvalidRewardToken.selector);
+        vm.expectRevert(DeepstateMinterController.InvalidDeepstateToken.selector);
         new DeepstateMinterController(address(this), address(0), address(sablier), recipient, MINT_CAP);
 
-        vm.expectRevert(DeepstateMinterController.InvalidRewardToken.selector);
+        vm.expectRevert(DeepstateMinterController.InvalidDeepstateToken.selector);
         new DeepstateMinterController(address(this), unauthorized, address(sablier), recipient, MINT_CAP);
 
         vm.expectRevert(DeepstateMinterController.InvalidSablierLockup.selector);

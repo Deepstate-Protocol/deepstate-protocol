@@ -17,18 +17,18 @@ import {IDeepstateMinterController} from "../src/interfaces/IDeepstateMinterCont
 import {MockSablierLockupLinearV4} from "./mocks/MockSablierLockupLinearV4.sol";
 
 contract InvalidRewardTokenMinterController is IDeepstateMinterController {
-    address internal immutable _rewardToken;
+    address internal immutable _deepstateToken;
 
-    constructor(address rewardToken_) {
-        _rewardToken = rewardToken_;
+    constructor(address deepstateToken_) {
+        _deepstateToken = deepstateToken_;
     }
 
     function hasRole(bytes32, address) external pure returns (bool) {
         return true;
     }
 
-    function rewardToken() external view returns (address) {
-        return _rewardToken;
+    function deepstateToken() external view returns (address) {
+        return _deepstateToken;
     }
 
     function mint(address, uint256) external pure returns (uint256) {

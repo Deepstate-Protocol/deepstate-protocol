@@ -27,7 +27,7 @@ contract DeepstateMinterController is AccessControl, Ownable, ReentrancyGuard {
     uint40 public constant VESTING_DURATION = 365 days;
     uint40 public constant TOKEN_ADMINISTRATION_DURATION = 2 * 365 days;
 
-    DeepstateToken public immutable rewardToken;
+    DeepstateToken public immutable deepstateToken;
     ISablierLockupLinearV4 public immutable sablierLockup;
     address public immutable recipient;
     /// @notice Maximum live DEEP supply this controller will permit after a mint.
@@ -50,7 +50,7 @@ contract DeepstateMinterController is AccessControl, Ownable, ReentrancyGuard {
     event TokenAdministrationReturned(address indexed owner, address indexed caller);
 
     error InvalidOwner();
-    error InvalidRewardToken();
+    error InvalidDeepstateToken();
     error InvalidSablierLockup();
     error InvalidRecipient();
     error InvalidMintCap();
@@ -66,14 +66,14 @@ contract DeepstateMinterController is AccessControl, Ownable, ReentrancyGuard {
     error OwnerMustRetainDefaultAdmin();
     error MintCapExceeded(uint256 cap, uint256 attemptedSupply);
 
-    constructor(address owner_, address rewardToken_, address sablierLockup_, address recipient_, uint256 mintCap_) {
+    constructor(address owner_, address deepstateToken_, address sablierLockup_, address recipient_, uint256 mintCap_) {
         if (owner_ == address(0)) revert InvalidOwner();
-        if (rewardToken_ == address(0) || rewardToken_.code.length == 0) revert InvalidRewardToken();
+        if (deepstateToken_ == address(0) || deepstateToken_.code.length == 0) revert InvalidDeepstateToken();
         if (sablierLockup_ == address(0) || sablierLockup_.code.length == 0) revert InvalidSablierLockup();
         if (recipient_ == address(0)) revert InvalidRecipient();
         if (mintCap_ == 0) revert InvalidMintCap();
 
-        rewardToken = DeepstateToken(rewardToken_);
+        deepstateToken = DeepstateToken(deepstateToken_);
         sablierLockup = ISablierLockupLinearV4(sablierLockup_);
         recipient = recipient_;
         mintCap = mintCap_;
@@ -87,10 +87,10 @@ contract DeepstateMinterController is AccessControl, Ownable, ReentrancyGuard {
     function lockTokenAdministration() external onlyOwner {
         if (tokenAdministrationEndsAt != 0) revert TokenAdministrationAlreadyActivated();
 
-        bytes32 tokenAdminRole = rewardToken.DEFAULT_ADMIN_ROLE();
-        if (!rewardToken.hasRole(tokenAdminRole, address(this))) revert ControllerNotTokenAdmin();
-        if (!rewardToken.hasRole(rewardToken.MINTER_ROLE(), address(this))) {
-            rewardToken.grantRole(rewardToken.MINTER_ROLE(), address(this));
+        bytes32 tokenAdminRole = deepstateToken.DEFAULT_ADMIN_ROLE();
+        if (!deepstateToken.hasRole(tokenAdminRole, address(this))) revert ControllerNotTokenAdmin();
+        if (!deepstateToken.hasRole(deepstateToken.MINTER_ROLE(), address(this))) {
+            deepstateToken.grantRole(deepstateToken.MINTER_ROLE(), address(this));
         }
 
         uint40 endsAt = SafeCast.toUint40(block.timestamp + TOKEN_ADMINISTRATION_DURATION);
@@ -108,13 +108,13 @@ contract DeepstateMinterController is AccessControl, Ownable, ReentrancyGuard {
         address owner_ = owner();
         if (block.timestamp < endsAt) revert TokenAdministrationActive(endsAt);
 
-        bytes32 tokenAdminRole = rewardToken.DEFAULT_ADMIN_ROLE();
-        if (!rewardToken.hasRole(tokenAdminRole, address(this))) revert ControllerNotTokenAdmin();
+        bytes32 tokenAdminRole = deepstateToken.DEFAULT_ADMIN_ROLE();
+        if (!deepstateToken.hasRole(tokenAdminRole, address(this))) revert ControllerNotTokenAdmin();
 
         tokenAdministrationReturned = true;
         // Grant first so DeepstateToken's final-admin invariant cannot strand the token.
-        rewardToken.grantRole(tokenAdminRole, owner_);
-        rewardToken.renounceRole(tokenAdminRole, address(this));
+        deepstateToken.grantRole(tokenAdminRole, owner_);
+        deepstateToken.renounceRole(tokenAdminRole, address(this));
 
         emit TokenAdministrationReturned(owner_, msg.sender);
     }
@@ -130,14 +130,14 @@ contract DeepstateMinterController is AccessControl, Ownable, ReentrancyGuard {
         uint128 streamAmount = SafeCast.toUint128(vestingAmount);
 
         uint256 mintSupply = amount + vestingAmount;
-        uint256 attemptedSupply = rewardToken.totalSupply() + mintSupply;
+        uint256 attemptedSupply = deepstateToken.totalSupply() + mintSupply;
         if (attemptedSupply > mintCap) revert MintCapExceeded(mintCap, attemptedSupply);
 
-        IERC20 token = IERC20(address(rewardToken));
+        IERC20 token = IERC20(address(deepstateToken));
         uint256 balanceBefore = token.balanceOf(address(this));
 
-        rewardToken.mint(to, amount);
-        rewardToken.mint(address(this), vestingAmount);
+        deepstateToken.mint(to, amount);
+        deepstateToken.mint(address(this), vestingAmount);
 
         token.forceApprove(address(sablierLockup), vestingAmount);
         streamId = sablierLockup.createWithDurationsLL(
