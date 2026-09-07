@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
+
 import {DeepstateRewarder} from "./DeepstateRewarder.sol";
+import {IBurnableERC20} from "./interfaces/IBurnableERC20.sol";
 
 /// @notice Rewarder that starts a fresh schedule for orders already resting in the active market.
+/// @dev Retains Rewarder V2's owner-controlled balance-burning capability.
 contract DeepstateRewarderV3 is DeepstateRewarder {
     constructor(
         address owner_,
@@ -34,4 +38,10 @@ contract DeepstateRewarderV3 is DeepstateRewarder {
             token1MaxQuantity_
         )
     {}
+
+    /// @notice Burn this rewarder's entire reward-token balance.
+    function burnBalance() external onlyOwner {
+        uint256 amount = SafeTransferLib.balanceOf(rewardToken, address(this));
+        IBurnableERC20(rewardToken).burn(amount);
+    }
 }

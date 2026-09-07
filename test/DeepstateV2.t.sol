@@ -6,20 +6,33 @@ import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
 
 import {DeepstateTokenV2 as DeepstateToken} from "../src/DeepstateTokenV2.sol";
 import {DeepstateGovernorV2 as DeepstateGovernor} from "../src/DeepstateGovernorV2.sol";
+import {MockSablierLockupLinearV4} from "./mocks/MockSablierLockupLinearV4.sol";
 
 contract DeepstateTokenAndGovernorTest is Test {
     address internal alice = makeAddr("alice");
     address internal bob = makeAddr("bob");
     address internal guardian = makeAddr("guardian");
+    address internal endowmentRecipient = makeAddr("endowmentRecipient");
 
     DeepstateToken internal token;
     DeepstateGovernor internal governor;
+    MockSablierLockupLinearV4 internal sablier;
 
     function setUp() public {
-        token = new DeepstateToken(address(this), 3_000_000_000e18);
+        sablier = new MockSablierLockupLinearV4();
+        token = new DeepstateToken(address(this), 3_000_000_000e18, address(sablier), endowmentRecipient);
         token.grantRole(token.MINTER_ROLE(), address(this));
         token.mint(alice, 100e18);
         governor = new DeepstateGovernor(IVotes(address(token)), 0, 1 days, 1 days, 1, 10, 1 days);
+    }
+
+    function testTokenIdentityAndEndowmentConfiguration() public view {
+        assertEq(token.name(), "Deepstate 2");
+        assertEq(token.symbol(), "2DEEP");
+        assertEq(address(token.sablierLockup()), address(sablier));
+        assertEq(token.endowmentRecipient(), endowmentRecipient);
+        assertEq(token.ENDOWMENT_TERM(), 2 * 365 days);
+        assertEq(token.VESTING_DURATION(), 365 days);
     }
 
     function testRecipientsSelfDelegateOnMintAndFirstTransfer() public {
@@ -59,6 +72,20 @@ contract DeepstateTokenAndGovernorTest is Test {
         assertEq(token.supplyCap(), 4_000_000_000e18);
     }
 
+    function testGovernanceFractionsUseCurrent2DeepSupply() public {
+        assertEq(governor.proposalThreshold(), 1e18);
+        assertEq(governor.quorum(block.timestamp), 10e18);
+
+        token.mint(bob, 100e18);
+
+        assertEq(governor.proposalThreshold(), 2e18);
+        assertEq(governor.quorum(block.timestamp), 20e18);
+    }
+
+    function testGovernanceIsOpenImmediately() public view {
+        assertEq(governor.governanceStart(), block.timestamp);
+    }
+
     function testMinterCannotExceedCap() public {
         token.grantRole(token.MINTER_ROLE(), bob);
 
@@ -67,6 +94,93 @@ contract DeepstateTokenAndGovernorTest is Test {
             abi.encodeWithSelector(DeepstateToken.SupplyCapExceeded.selector, 3_000_000_000e18, 3_000_000_001e18)
         );
         token.mint(bob, 3_000_000_000e18 - 100e18 + 1e18);
+    }
+
+    function testControlledMintAddsThirtyPercentOfCombinedIssuanceToOneYearStream() public {
+        token.grantRole(token.ENDOWMENT_MINTER_ROLE(), address(this));
+        uint256 startedAt = block.timestamp;
+
+        token.mint(alice, 70e18);
+        uint256 streamId = 1;
+
+        assertEq(token.balanceOf(alice), 170e18);
+        assertEq(token.balanceOf(address(sablier)), 30e18);
+        assertEq(token.totalSupply(), 200e18);
+        assertEq(token.endowmentEndsAt(), startedAt + 2 * 365 days);
+
+        MockSablierLockupLinearV4.Stream memory created = sablier.stream(streamId);
+        assertEq(created.sender, address(token));
+        assertEq(created.recipient, endowmentRecipient);
+        assertEq(created.depositAmount, 30e18);
+        assertEq(address(created.token), address(token));
+        assertFalse(created.cancelable);
+        assertTrue(created.transferable);
+        assertEq(created.granularity, 1 seconds);
+        assertEq(created.durations.cliff, 0);
+        assertEq(created.durations.total, 365 days);
+    }
+
+    function testRawMigrationMintDoesNotCreateEndowmentOrStartTerm() public {
+        token.mint(bob, 10e18);
+
+        assertEq(token.balanceOf(bob), 10e18);
+        assertEq(token.balanceOf(address(sablier)), 0);
+        assertEq(token.endowmentEndsAt(), 0);
+    }
+
+    function testControlledMintContinuesWithoutEndowmentAfterTwoYears() public {
+        token.grantRole(token.ENDOWMENT_MINTER_ROLE(), address(this));
+        token.mint(alice, 70e18);
+        uint40 endsAt = token.endowmentEndsAt();
+        uint256 streamedBefore = token.balanceOf(address(sablier));
+
+        vm.warp(endsAt);
+        token.mint(alice, 70e18);
+
+        assertEq(token.balanceOf(alice), 240e18);
+        assertEq(token.balanceOf(address(sablier)), streamedBefore);
+        assertEq(sablier.nextStreamId(), 2);
+    }
+
+    function testFuzzControlledMintUsesThirtySeventiethsMath(uint128 rawAmount) public {
+        uint256 amount = bound(uint256(rawAmount), 3, 1_000_000_000e18);
+        token.grantRole(token.ENDOWMENT_MINTER_ROLE(), address(this));
+        uint256 supplyBefore = token.totalSupply();
+
+        token.mint(bob, amount);
+
+        uint256 expectedEndowment = amount * 30 / 70;
+        assertEq(token.balanceOf(bob), amount);
+        assertEq(token.balanceOf(address(sablier)), expectedEndowment);
+        assertEq(token.totalSupply(), supplyBefore + amount + expectedEndowment);
+        assertLe(expectedEndowment * 70, amount * 30);
+        assertLt(amount * 30 - expectedEndowment * 70, 70);
+    }
+
+    function testControlledRoleAutomaticallyUsesEndowment() public {
+        token.grantRole(token.ENDOWMENT_MINTER_ROLE(), bob);
+
+        vm.prank(bob);
+        token.mint(bob, 70e18);
+
+        assertEq(token.balanceOf(bob), 70e18);
+        assertEq(token.balanceOf(address(sablier)), 30e18);
+    }
+
+    function testControlledMintCapIncludesPrimaryAndEndowment() public {
+        token.grantRole(token.ENDOWMENT_MINTER_ROLE(), address(this));
+        uint256 amount = token.supplyCap() - token.totalSupply();
+        uint256 expectedEndowment = amount * 30 / 70;
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeepstateToken.SupplyCapExceeded.selector, token.supplyCap(), token.supplyCap() + expectedEndowment
+            )
+        );
+        token.mint(bob, amount);
+
+        assertEq(token.totalSupply(), 100e18);
+        assertEq(token.endowmentEndsAt(), 0);
     }
 
     function testGovernanceCanAddAndRemoveGuardian() public {

@@ -113,7 +113,7 @@ contract DeepstateGovernor is
         _setVotingPeriod(newVotingPeriod);
     }
 
-    function proposalThreshold() public view override(Governor, GovernorSettings) returns (uint256) {
+    function proposalThreshold() public view virtual override(Governor, GovernorSettings) returns (uint256) {
         uint256 numerator = _proposalThresholdNumerator;
         uint48 currentTimepoint = clock();
         if (currentTimepoint == 0) return numerator == 0 ? 0 : 1;
@@ -148,7 +148,13 @@ contract DeepstateGovernor is
         return super.propose(targets, values, calldatas, description);
     }
 
-    function quorum(uint256 timepoint) public view override(Governor, GovernorVotesQuorumFraction) returns (uint256) {
+    function quorum(uint256 timepoint)
+        public
+        view
+        virtual
+        override(Governor, GovernorVotesQuorumFraction)
+        returns (uint256)
+    {
         return Math.max(super.quorum(timepoint), MINIMUM_QUORUM);
     }
 

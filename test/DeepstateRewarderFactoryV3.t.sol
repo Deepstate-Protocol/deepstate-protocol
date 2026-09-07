@@ -2,11 +2,13 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
+import {Ownable} from "solady/auth/Ownable.sol";
 
 import {DeepstateTokenV2 as DeepstateToken} from "../src/DeepstateTokenV2.sol";
 import {DeepstateRewarderV3} from "../src/DeepstateRewarderV3.sol";
 import {DeepstateRewarderFactoryV3} from "../src/DeepstateRewarderFactoryV3.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
+import {MockSablierLockupLinearV4} from "./mocks/MockSablierLockupLinearV4.sol";
 
 contract MockRouterV3 {
     address public owner;
@@ -44,15 +46,17 @@ contract DeepstateRewarderFactoryV3Test is Test {
     DeepstateRewarderFactoryV3 internal factory;
     MockERC20 internal tokenA;
     MockERC20 internal tokenB;
+    MockSablierLockupLinearV4 internal sablier;
 
     function setUp() public {
-        token = new DeepstateToken(address(this), 3_000_000_000e18);
+        sablier = new MockSablierLockupLinearV4();
+        token = new DeepstateToken(address(this), 3_000_000_000e18, address(sablier), makeAddr("endowment"));
         router = new MockRouterV3();
         factory = new DeepstateRewarderFactoryV3(address(this), address(router), address(token));
         tokenA = new MockERC20("Token A", "A", 6);
         tokenB = new MockERC20("Token B", "B", 18);
 
-        token.grantRole(token.MINTER_ROLE(), address(factory));
+        token.grantRole(token.ENDOWMENT_MINTER_ROLE(), address(factory));
         router.transferOwnership(address(factory));
     }
 
@@ -62,6 +66,7 @@ contract DeepstateRewarderFactoryV3Test is Test {
         bytes32 poolId = keccak256(abi.encode(config.token0, config.token1));
 
         assertEq(token.balanceOf(address(first)), 100_000_000e18);
+        assertEq(token.balanceOf(address(sablier)), 42_857_142_857_142_857_142_857_142);
         assertEq(first.owner(), address(factory));
         assertEq(first.sideEmissionCap(), 50_000_000e18);
         assertEq(first.emissionDuration(), 365 days);
@@ -76,13 +81,35 @@ contract DeepstateRewarderFactoryV3Test is Test {
         DeepstateRewarderV3 second = factory.deployMarket(config);
         assertNotEq(address(first), address(second));
         assertEq(router.poolHook(poolId), address(second));
-        assertEq(token.totalSupply(), 200_000_000e18);
+        assertEq(token.totalSupply(), 285_714_285_714_285_714_285_714_284);
     }
 
     function testUnauthorizedAddressCannotDeployMarket() public {
         vm.prank(unauthorized);
         vm.expectRevert();
         factory.deployMarket(_config());
+    }
+
+    function testFactoryOwnerCanBurnRewarderBalance() public {
+        DeepstateRewarderV3 rewarder = factory.deployMarket(_config());
+        uint256 funding = token.balanceOf(address(rewarder));
+        uint256 supplyBefore = token.totalSupply();
+
+        vm.prank(unauthorized);
+        vm.expectRevert(Ownable.Unauthorized.selector);
+        rewarder.burnBalance();
+
+        vm.prank(unauthorized);
+        vm.expectRevert(Ownable.Unauthorized.selector);
+        factory.burnBalance(address(rewarder));
+
+        factory.burnBalance(address(rewarder));
+        factory.burnBalance(address(rewarder));
+
+        assertEq(token.balanceOf(address(rewarder)), 0);
+        assertEq(token.totalSupply(), supplyBefore - funding);
+        assertEq(token.balanceOf(address(sablier)), 42_857_142_857_142_857_142_857_142);
+        assertEq(rewarder.owner(), address(factory));
     }
 
     function testOnlyGovernorCanReturnRouterOwnership() public {

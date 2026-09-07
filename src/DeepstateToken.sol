@@ -18,7 +18,7 @@ contract DeepstateToken is ERC20, AccessControl {
         _grantRole(DEFAULT_ADMIN_ROLE, admin_);
     }
 
-    function mint(address to, uint256 amount) external onlyRole(MINTER_ROLE) {
+    function mint(address to, uint256 amount) external virtual onlyRole(MINTER_ROLE) {
         if (to == address(0)) revert ZeroAddress();
         _mint(to, amount);
     }

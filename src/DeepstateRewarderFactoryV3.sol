@@ -90,6 +90,11 @@ contract DeepstateRewarderFactoryV3 is Ownable {
         deepstate.transferOwnership(owner());
     }
 
+    /// @notice Burn the full reward-token balance of a Rewarder V3 owned by this factory.
+    function burnBalance(address rewarder) external onlyOwner {
+        DeepstateRewarderV3(rewarder).burnBalance();
+    }
+
     function renounceOwnership() public payable override onlyOwner {
         revert NewOwnerIsZeroAddress();
     }
