@@ -58,6 +58,54 @@ The deployment deliberately does not install a timelock. The Governor remains
 the direct owner and executor for the vault, rewarder, and router. Successful
 proposals can therefore execute immediately after voting ends.
 
+## Controlled Minting
+
+`DeepstateMinterController` is the operational DEEP minter. It uses Solady
+`OwnableRoles`: governance is the owner and may grant the controller's
+`MINTER_ROLE` bit only to approved issuance contracts, such as
+`DeepstateRewarderFactory`. For every requested mint `M`, the controller mints
+`M` as the primary 70% tranche and mints `floor(M * 30 / 70)` to Sablier
+Lockup v4.0.1 as the recipient's 30% tranche. Each recipient allocation gets
+its own linear one-year stream.
+The vesting recipient and Sablier contract are immutable constructor settings;
+streams are non-cancelable and their NFTs are non-transferable.
+
+The controller also has an immutable deployment-time live-supply cap. The
+intended production value is 20,000,000,000 DEEP. Before every mint, the
+controller checks the existing DEEP `totalSupply()` plus both the requested
+amount and its corresponding 30% tranche. Burns reduce total supply and reopen
+capacity below the cap. This is a controller-level soft cap: governance can
+bypass it only by authorizing a different token-level minter after token
+administration returns.
+
+The requested address always receives the complete `M`; the recipient amount is
+minted in addition so that it represents 30% of the combined issuance. A
+factory market therefore receives its complete 100,000,000 DEEP initial funding
+while a separate `floor(100,000,000 * 30 / 70)` DEEP stream is created. If a
+market is retired, its unspent rewarder balance is burned, but the independent
+recipient stream continues vesting.
+
+This policy is enforceable only while `DeepstateMinterController` is the sole
+operational holder of `DeepstateToken.MINTER_ROLE`. Governance must not grant
+the token-level role directly to the factory or another minter that can bypass
+the controller.
+
+For the initial two-year issuance term, the controller temporarily holds
+`DeepstateToken.DEFAULT_ADMIN_ROLE` while governance remains the controller's
+owner. Governance calls `lockTokenAdministration()` only after granting the
+token admin role to the controller. Locking also ensures the controller has the
+token minter role. The controller owner may rotate during the term, but
+administration cannot be unlocked early. At or after the exact two-year
+deadline, anyone may call `unlockTokenAdministration()`. Unlocking grants the
+token admin role to the controller's current owner before the controller
+renounces it, preserving the token's final-admin invariant throughout the
+transition. The controller owner receives
+independent mint authority without needing `DeepstateMinterController.MINTER_ROLE`.
+Ownership transfers move that owner authority without changing separately
+delegated minter roles. Every non-owner mint requires `MINTER_ROLE`.
+The controller retains its ordinary token minter role until governance revokes
+it after regaining token administration.
+
 ## Reward Schedule
 
 The deployment creates one immutable rewarder for NVDA/USDG. Each side starts

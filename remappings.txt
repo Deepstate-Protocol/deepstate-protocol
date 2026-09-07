@@ -1,4 +1,8 @@
+@chainlink/contracts/=lib/chainlink-contracts/contracts/
 forge-std/=lib/forge-std/src/
 solady/=lib/solady/src/
 deepstate-contracts/=lib/deepstate-contracts/src/
 @openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/
+@prb/math/=lib/prb-math/
+@sablier/evm-utils/=lib/sablier/utils/
+@sablier/lockup/=lib/sablier/lockup/
