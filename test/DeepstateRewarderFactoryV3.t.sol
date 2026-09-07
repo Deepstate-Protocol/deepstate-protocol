@@ -11,7 +11,6 @@ import {MockERC20} from "./mocks/MockERC20.sol";
 contract MockRouterV3 {
     address public owner;
     mapping(bytes32 poolId => address hook) public poolHook;
-    bytes32 public currentBookId = keccak256("book");
 
     constructor() {
         owner = msg.sender;
@@ -27,10 +26,6 @@ contract MockRouterV3 {
     }
 
     function setFeeConfig(address, uint16) external onlyOwner {}
-
-    function activeBookId(address, address) external view returns (bytes32) {
-        return currentBookId;
-    }
 
     function topOrder(bytes32, bool isBid) external pure returns (uint32 nonce, uint160 soldAmount) {
         return isBid ? (uint32(11), uint160(2e18)) : (uint32(22), uint160(3e6));
@@ -73,10 +68,10 @@ contract DeepstateRewarderFactoryV3Test is Test {
         assertEq(router.poolHook(poolId), address(first));
         (uint32 token0Nonce, uint64 token0StartedAt) = first.rewardees(config.token0);
         (uint32 token1Nonce, uint64 token1StartedAt) = first.rewardees(config.token1);
-        assertEq(token0Nonce, 22);
-        assertEq(token1Nonce, 11);
-        assertEq(token0StartedAt, block.timestamp);
-        assertEq(token1StartedAt, block.timestamp);
+        assertEq(token0Nonce, 0);
+        assertEq(token1Nonce, 0);
+        assertEq(token0StartedAt, 0);
+        assertEq(token1StartedAt, 0);
 
         DeepstateRewarderV3 second = factory.deployMarket(config);
         assertNotEq(address(first), address(second));

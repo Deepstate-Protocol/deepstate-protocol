@@ -33,7 +33,5 @@ contract DeepstateRewarderV3 is DeepstateRewarder {
             token1StartQuantity_,
             token1MaxQuantity_
         )
-    {
-        _initializeLiveCursors();
-    }
+    {}
 }

@@ -135,25 +135,6 @@ contract DeepstateRewarder is Ownable, IHook {
         token1QuantityLogWad = uint128(token1Log);
     }
 
-    /// @dev Begin a fresh schedule for top orders already resting in the active book.
-    /// Derived rewarders opt into this behavior by calling the initializer from their constructor.
-    function _initializeLiveCursors() internal {
-        IOrderBook orderBook = IOrderBook(deepstate);
-        bytes32 bookId = orderBook.activeBookId(token0, token1);
-        (uint32 token0Nonce, uint160 token0Amount) = orderBook.topOrder(bookId, false);
-        (uint32 token1Nonce, uint160 token1Amount) = orderBook.topOrder(bookId, true);
-        uint64 startedAt = uint64(block.timestamp);
-
-        if (token0Nonce != 0 && token0Amount != 0) {
-            _token0BookId = bookId;
-            _token0State = _packState(token0Nonce, startedAt, startedAt, 0);
-        }
-        if (token1Nonce != 0 && token1Amount != 0) {
-            _token1BookId = bookId;
-            _token1State = _packState(token1Nonce, startedAt, startedAt, 0);
-        }
-    }
-
     /// @notice Current top-order cursor for one side.
     function rewardees(address token) external view returns (uint32 orderNonce, uint64 startedAt) {
         (orderNonce, startedAt,,) = _unpackState(_packedState(token));
