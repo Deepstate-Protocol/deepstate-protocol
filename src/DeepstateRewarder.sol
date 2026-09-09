@@ -387,6 +387,44 @@ contract DeepstateRewarder is Ownable, IHook {
         balances[bookId][token][nonce] = 0;
     }
 
+    /// @dev Checkpoint one live rewardee through the current timestamp, then permanently forget its cursor unless the
+    /// engine later installs another one. Derived rewarders call this only after the Router has stopped using them.
+    function _freezeRewardee(address token)
+        internal
+        returns (bytes32 bookId, uint32 orderNonce, uint256 checkpointedReward)
+    {
+        bool isToken0 = token == token0;
+        if (!isToken0 && token != token1) revert InvalidHookToken();
+
+        uint256 packed = isToken0 ? _token0State : _token1State;
+        uint64 topStartedAt;
+        uint64 activatedAt;
+        uint96 accrued;
+        (orderNonce, topStartedAt, activatedAt, accrued) = _unpackState(packed);
+        bookId = isToken0 ? _token0BookId : _token1BookId;
+
+        if (orderNonce != 0 && topStartedAt != 0 && activatedAt != 0 && block.timestamp > topStartedAt) {
+            (uint32 liveNonce, uint160 liveAmount) = IOrderBook(deepstate).topOrder(bookId, !isToken0);
+            if (liveNonce == orderNonce && liveAmount != 0) {
+                checkpointedReward = previewReward(token, topStartedAt, block.timestamp, liveAmount);
+                checkpointedReward = _remainingReward(accrued, checkpointedReward);
+                if (checkpointedReward != 0) {
+                    balances[bookId][token][orderNonce] += checkpointedReward;
+                    accrued += uint96(checkpointedReward);
+                }
+            }
+        }
+
+        uint256 frozenState = _packState(0, 0, activatedAt, accrued);
+        if (isToken0) {
+            _token0State = frozenState;
+            _token0BookId = bytes32(0);
+        } else {
+            _token1State = frozenState;
+            _token1BookId = bytes32(0);
+        }
+    }
+
     function _resolveClaimant(bytes32 bookId, bytes32 order) private returns (address claimant) {
         IOrderBook orderBook = IOrderBook(deepstate);
         bytes32 id = orderBook.orderId(bookId, order);
